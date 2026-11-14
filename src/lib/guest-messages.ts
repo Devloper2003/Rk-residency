@@ -204,7 +204,10 @@ export async function guestWhatsAppConfigured(): Promise<boolean> {
 
 /**
  * Send one WhatsApp message to a GUEST through the configured gateway.
- * Providers that can text arbitrary numbers: ultramsg | greenapi | aisensy.
+ * Providers that can text arbitrary numbers: ultramsg | greenapi | aisensy | meta.
+ * meta = the owner's DIRECT Meta WhatsApp Cloud API connection
+ * (whatsapp_meta_token + whatsapp_meta_phone_id; template optional via
+ * whatsapp_meta_template — required outside the 24h service window).
  * callmebot (free personal gateway) can only reach the registered owner
  * phone, so it returns ok:false and callers fall back to email.
  */
@@ -220,13 +223,17 @@ export async function sendGuestWhatsApp(phone: string, text: string): Promise<{ 
             "whatsapp_ultramsg_instance",
             "whatsapp_greenapi_instance",
             "whatsapp_aisensy_campaign",
+            "whatsapp_meta_token",
+            "whatsapp_meta_phone_id",
+            "whatsapp_meta_template",
+            "whatsapp_meta_lang",
           ],
         },
       },
       select: { key: true, value: true },
     });
     const cfg = Object.fromEntries(rows.map((r) => [r.key, r.value]));
-    const key = cfg.whatsapp_api_key;
+    const key = cfg.whatsapp_api_key || cfg.whatsapp_meta_token;
     if (!key) return { ok: false, error: "gateway_key_missing" };
     const provider = (cfg.whatsapp_provider || "callmebot").trim().toLowerCase();
     const digits = phone.replace(/\D/g, "");
@@ -278,6 +285,46 @@ export async function sendGuestWhatsApp(phone: string, text: string): Promise<{ 
       });
       const parsed: any = await res.json().catch(() => null);
       return { ok: res.ok && parsed?.success !== false };
+    }
+
+    if (provider === "meta") {
+      const token = (cfg.whatsapp_meta_token || cfg.whatsapp_api_key || "").trim();
+      const phoneId = (cfg.whatsapp_meta_phone_id || "").trim();
+      if (!token || !phoneId) return { ok: false, error: "meta_config_missing" };
+      const template = (cfg.whatsapp_meta_template || "").trim();
+      const lang = (cfg.whatsapp_meta_lang || "en").trim() || "en";
+      const payload = template
+        ? {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: digits,
+            type: "template",
+            template: {
+              name: template,
+              language: { code: lang },
+              components: [
+                { type: "body", parameters: [{ type: "text", text: text.replace(/[*_~`]/g, "").slice(0, 1024) }] },
+              ],
+            },
+          }
+        : {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: digits,
+            type: "text",
+            text: { preview_url: false, body: text.slice(0, 4096) },
+          };
+      const res = await fetch(`https://graph.facebook.com/v21.0/${encodeURIComponent(phoneId)}/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const parsed: any = await res.json().catch(() => null);
+      if (!res.ok || !parsed?.messages?.[0]?.id) {
+        return { ok: false, error: `meta_${res.status}${parsed?.error?.code ? `_${parsed.error.code}` : ""}` };
+      }
+      return { ok: true };
     }
 
     return { ok: false, error: "callmebot_owner_only" };

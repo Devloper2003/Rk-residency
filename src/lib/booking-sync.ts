@@ -67,20 +67,22 @@ function makeRazorpay(keyId: string, keySecret: string): Razorpay {
 }
 
 // ---------------------------------------------------------------------------
-// WhatsApp owner notifications (multi-gateway: CallMeBot | UltraMsg | Green API | AiSensy)
+// WhatsApp owner notifications (multi-gateway: CallMeBot | UltraMsg | Green API | AiSensy | Meta Cloud API)
 // ---------------------------------------------------------------------------
 
 function waEnabled(cfg: Record<string, string>): boolean {
   return (
     cfg.whatsapp_enabled === "true" &&
     !!cfg.whatsapp_owner_phone &&
-    !!cfg.whatsapp_api_key
+    // Meta Cloud API keeps its own token — either key satisfies the gate
+    // (the provider branch still validates exactly what it needs).
+    !!(cfg.whatsapp_api_key || cfg.whatsapp_meta_token)
   );
 }
 
 /**
  * Send one WhatsApp message to the owner through the configured gateway.
- * Four interchangeable providers (owner's choice in Admin → Payment Settings):
+ * Five interchangeable providers (owner's choice in Admin → Payment Settings):
  *   - callmebot (default)  — key from +34 644 51 95 23 registration, plain GET
  *   - ultramsg             — owner's own WhatsApp linked via QR scan
  *                            POST https://api.ultramsg.com/{instance}/messages/chat
@@ -92,9 +94,20 @@ function waEnabled(cfg: Record<string, string>): boolean {
  *                            an API campaign using it — the whole alert text
  *                            rides templateParams[0])
  *                            POST https://backend.aisensy.com/campaign/t1/api/v2
- * All four reuse the same SiteSetting keys: whatsapp_enabled,
- * whatsapp_owner_phone, whatsapp_api_key (+ provider-specific campaign/
- * instance id).
+ *   - meta                 — DIRECT Meta WhatsApp Cloud API (graph.facebook.com),
+ *                            the owner's own WhatsApp Business number + app:
+ *                            token in whatsapp_meta_token (falls back to
+ *                            whatsapp_api_key), Phone Number ID in
+ *                            whatsapp_meta_phone_id.
+ *                            Template name set (whatsapp_meta_template) →
+ *                            template message with the alert text as {{1}}
+ *                            (works outside the 24h service window);
+ *                            template empty → free-form text (delivers only
+ *                            inside a 24h customer-service window).
+ *                            POST https://graph.facebook.com/v21.0/{phone-id}/messages
+ * All reuse the same SiteSetting keys: whatsapp_enabled,
+ * whatsapp_owner_phone, whatsapp_api_key (+ provider-specific token/
+ * campaign/instance id).
  * Fire-and-forget. Never throws. Returns true only on a provider-confirmed send.
  */
 export async function notifyOwnerWhatsApp(text: string): Promise<boolean> {
@@ -107,6 +120,10 @@ export async function notifyOwnerWhatsApp(text: string): Promise<boolean> {
       "whatsapp_ultramsg_instance",
       "whatsapp_greenapi_instance",
       "whatsapp_aisensy_campaign",
+      "whatsapp_meta_token",
+      "whatsapp_meta_phone_id",
+      "whatsapp_meta_template",
+      "whatsapp_meta_lang",
     ]);
     if (!waEnabled(cfg)) return false;
     const provider = (cfg.whatsapp_provider || "callmebot").trim().toLowerCase();
@@ -184,6 +201,56 @@ export async function notifyOwnerWhatsApp(text: string): Promise<boolean> {
       const parsed: any = await res.json().catch(() => null);
       const ok = res.ok && parsed?.success !== false;
       if (!ok) console.error("[whatsapp-notify] AiSensy responded", res.status, JSON.stringify(parsed)?.slice(0, 200));
+      return ok;
+    }
+
+    if (provider === "meta") {
+      const token = (cfg.whatsapp_meta_token || cfg.whatsapp_api_key || "").trim();
+      const phoneId = (cfg.whatsapp_meta_phone_id || "").trim();
+      if (!token || !phoneId) {
+        console.error("[whatsapp-notify] meta selected but Meta Access Token / Phone Number ID missing");
+        return false;
+      }
+      // Meta WhatsApp Cloud API — official Graph endpoint. Template mode
+      // (template name set) works outside the 24h service window, same
+      // one-variable approach as the AiSensy branch; free-form otherwise.
+      const template = (cfg.whatsapp_meta_template || "").trim();
+      const lang = (cfg.whatsapp_meta_lang || "en").trim() || "en";
+      const payload = template
+        ? {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: digits,
+            type: "template",
+            template: {
+              name: template,
+              language: { code: lang },
+              components: [
+                { type: "body", parameters: [{ type: "text", text: text.replace(/[*_~`]/g, "").slice(0, 1024) }] },
+              ],
+            },
+          }
+        : {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: digits,
+            type: "text",
+            text: { preview_url: false, body: text.slice(0, 4096) },
+          };
+      const res = await fetch(`https://graph.facebook.com/v21.0/${encodeURIComponent(phoneId)}/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const parsed: any = await res.json().catch(() => null);
+      const ok = res.ok && !!parsed?.messages?.[0]?.id;
+      if (!ok) {
+        console.error("[whatsapp-notify] Meta Cloud API responded", res.status, JSON.stringify(parsed)?.slice(0, 300));
+        if (parsed?.error?.code === 131047) {
+          console.error("[whatsapp-notify] Meta: 24h service window closed — approved template (whatsapp_meta_template) chahiye");
+        }
+      }
       return ok;
     }
 

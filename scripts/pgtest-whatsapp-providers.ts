@@ -46,8 +46,36 @@ async function main() {
   const off = await notifyOwnerWhatsApp("smoke test");
   console.log(`disabled → ${off} (expect false)`);
 
+  // 6. meta (Meta Cloud API) with config guard — enabled but token/phone-id missing
+  await set("whatsapp_enabled", "true");
+  await set("whatsapp_provider", "meta");
+  await set("whatsapp_api_key", "");
+  await set("whatsapp_meta_token", "");
+  await set("whatsapp_meta_phone_id", "");
+  const m0 = await notifyOwnerWhatsApp("smoke test");
+  console.log(`meta no-token/no-phone-id → ${m0} (expect false, config guard)`);
+
+  // 7. meta with phone-id but NO token at all (meta_token + api_key empty) → guard
+  await set("whatsapp_meta_phone_id", "000000000");
+  const m1 = await notifyOwnerWhatsApp("smoke test");
+  console.log(`meta phone-id only, no token → ${m1} (expect false, config guard)`);
+
+  // 8. meta with fake token + fake phone-id → real HTTP to graph.facebook.com, Meta rejects
+  await set("whatsapp_meta_token", "EAAG-fake-token-smoke");
+  const m2 = await notifyOwnerWhatsApp("smoke test");
+  console.log(`meta fake-token → ${m2} (expect false, no crash)`);
+
+  // 9. meta token via fallback whatsapp_api_key (dedicated meta token empty) → still tries HTTP, rejects
+  await set("whatsapp_meta_token", "");
+  await set("whatsapp_api_key", "fake-key-fallback");
+  const m3 = await notifyOwnerWhatsApp("smoke test");
+  console.log(`meta token-fallback via api_key → ${m3} (expect false, no crash)`);
+
   // cleanup — don't leave fake creds around
-  for (const k of ["whatsapp_enabled", "whatsapp_api_key"]) await set(k, k === "whatsapp_enabled" ? "false" : "");
+  for (const k of ["whatsapp_enabled", "whatsapp_api_key", "whatsapp_meta_token", "whatsapp_meta_phone_id"]) {
+    await set(k, k === "whatsapp_enabled" ? "false" : "");
+  }
+  await set("whatsapp_provider", "callmebot");
 
   console.log("\nRESULT: all provider paths executed without crash");
   await db.$disconnect();

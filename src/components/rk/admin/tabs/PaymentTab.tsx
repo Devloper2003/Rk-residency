@@ -16,11 +16,15 @@ const PAYMENT_KEYS = [
   { key: "razorpay_mode", label: "Mode (sandbox/live)", category: "razorpay", type: "text" },
   { key: "razorpay_success_url", label: "Success URL", category: "razorpay", type: "text" },
   { key: "razorpay_failure_url", label: "Failure URL", category: "razorpay", type: "text" },
-  // WhatsApp owner notifications (multi-gateway: AiSensy | CallMeBot | UltraMsg | Green API)
+  // WhatsApp owner notifications (multi-gateway: AiSensy | CallMeBot | UltraMsg | Green API | Meta Cloud API)
   { key: "whatsapp_enabled", label: "Enable WhatsApp owner alerts", category: "whatsapp", type: "boolean" },
-  { key: "whatsapp_provider", label: "Gateway provider", category: "whatsapp", type: "select", options: ["aisensy", "callmebot", "ultramsg", "greenapi"] },
+  { key: "whatsapp_provider", label: "Gateway provider", category: "whatsapp", type: "select", options: ["aisensy", "callmebot", "ultramsg", "greenapi", "meta"] },
   { key: "whatsapp_owner_phone", label: "Owner WhatsApp number (91XXXXXXXXXX)", category: "whatsapp", type: "text" },
   { key: "whatsapp_api_key", label: "API key / Token (AiSensy API key · CallMeBot key · UltraMsg token · Green API token)", category: "whatsapp", type: "secret" },
+  { key: "whatsapp_meta_token", label: "Meta API Access Token (sirf Meta Cloud API ke liye — System User token, whatsapp_business_messaging permission)", category: "whatsapp", type: "secret" },
+  { key: "whatsapp_meta_phone_id", label: "Meta Phone Number ID (sirf Meta ke liye — Meta dashboard → WhatsApp → API Setup se copy karo)", category: "whatsapp", type: "text" },
+  { key: "whatsapp_meta_template", label: "Meta Template name (sirf Meta ke liye, optional — 24h window ke bahar ke messages ke liye approved utility template {{1}} chahiye)", category: "whatsapp", type: "text" },
+  { key: "whatsapp_meta_lang", label: "Meta Template language code (sirf Meta ke liye, default en — e.g. en, hi, en_US)", category: "whatsapp", type: "text" },
   { key: "whatsapp_aisensy_campaign", label: "AiSensy Campaign name (sirf AiSensy ke liye — EXACT naam, case-sensitive)", category: "whatsapp", type: "text" },
   { key: "whatsapp_ultramsg_instance", label: "UltraMsg Instance ID (sirf UltraMsg ke liye, e.g. instance99999)", category: "whatsapp", type: "text" },
   { key: "whatsapp_greenapi_instance", label: "Green API idInstance (sirf Green API ke liye, e.g. 123456)", category: "whatsapp", type: "text" },
@@ -51,6 +55,10 @@ const DEFAULTS: Record<string, string> = {
   whatsapp_ultramsg_instance: "",
   whatsapp_greenapi_instance: "",
   whatsapp_aisensy_campaign: "",
+  whatsapp_meta_token: "",
+  whatsapp_meta_phone_id: "",
+  whatsapp_meta_template: "",
+  whatsapp_meta_lang: "en",
   bookings_pending_cancel_minutes: "5",
   stripe_enabled: "false",
   stripe_publishable_key: "",
@@ -82,7 +90,7 @@ export function PaymentTab() {
       if (res.ok && data.sent) {
         toast.success("Test message sent — apna WhatsApp check karo!");
       } else if (res.ok) {
-        toast.error("Send failed — Enable ON + owner number + provider ke saare fields (API key, AiSensy campaign / instance id) sahi hone chahiye. Provider check karo (aisensy / callmebot / ultramsg / greenapi). AiSensy mein template + campaign dono approved hone chahiye.");
+        toast.error("Send failed — Enable ON + owner number + provider ke saare fields (API key, AiSensy campaign / Meta token + Phone Number ID / instance id) sahi hone chahiye. Provider check karo (aisensy / callmebot / ultramsg / greenapi / meta). AiSensy mein template + campaign dono approved hone chahiye; Meta mein 24h window ke bahar approved template chahiye.");
       } else {
         throw new Error(data.error || "Test failed");
       }
@@ -292,7 +300,7 @@ export function PaymentTab() {
         </div>
         <div className="mt-3 rounded-xl border border-[#25D366]/30 bg-[#25D366]/5 px-4 py-3">
           <p className="font-display text-xs text-charcoal-soft">
-            <strong className="text-[#25D366]">4 gateway options — jo chale wo choose karo (AiSensy best):</strong>
+            <strong className="text-[#25D366]">5 gateway options — jo chale wo choose karo (AiSensy best, Meta direct sabse powerful):</strong>
           </p>
           <p className="mt-1.5 font-display text-xs text-charcoal-soft">
             <strong className="text-charcoal">1. AiSensy</strong> (RECOMMENDED — Meta ka official WhatsApp Business API, template-approved delivery, CallMeBot jaisa koi registration jhanjhat nahi):{" "}
@@ -312,6 +320,9 @@ export function PaymentTab() {
           </p>
           <p className="mt-1.5 font-display text-xs text-charcoal-soft">
             <strong className="text-charcoal">4. Green API</strong>: green-api.com par register karo → instance banao → QR scan karo → idInstance + apiTokenInstance mil jayega. Provider = <span className="font-mono">greenapi</span>.
+          </p>
+          <p className="mt-1.5 font-display text-xs text-charcoal-soft">
+            <strong className="text-charcoal">5. Meta Cloud API (DIRECT — aapka apna WhatsApp Business number, Meta Cloud se function kiya hua)</strong>: developers.facebook.com → app banao → <strong className="text-charcoal">WhatsApp product add</strong> karo → (a) <strong className="text-charcoal">WhatsApp → API Setup</strong> se <strong className="text-charcoal">Phone Number ID</strong> copy karo → Phone Number ID field mein daalo; (b) <strong className="text-charcoal">Business Settings → System Users → Generate Token</strong> (permission: <span className="font-mono">whatsapp_business_messaging</span>) → token copy karke <strong className="text-charcoal">Meta API Access Token</strong> field mein daalo; (c) 24-hour service window ke bahar message bhejna hai toh <strong className="text-charcoal">WhatsApp Manager → Templates</strong> me utility template banao (body mein sirf ek <span className="font-mono">{"{{1}}"}</span>) — template ka naam Meta Template field mein daalo (khali = free-form text, sirf 24h window ke andar deliver hoga); (d) Provider = <span className="font-mono">meta</span>.
           </p>
           <p className="mt-1.5 font-display text-xs text-charcoal-soft">
             Har option mein: number <span className="font-mono">919760814931</span> likho, Enable ON, Save, phir Test button dabao. AiSensy mein message aapke AiSensy wale WhatsApp API number se owner ke personal number par aata hai. UltraMsg/Green API mein aapka apna WhatsApp hi linked hota hai — messages usi number se jaate hain.
