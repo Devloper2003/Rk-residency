@@ -22,7 +22,8 @@ export type AutomationId =
   | "review_request" // #3 post-checkout Google review request to the guest
   | "recovery_email" // #5 abandoned online-payment booking → one recovery email
   | "fb_auto_share" // #6 blog post published → Facebook page auto-share
-  | "newsletter_welcome"; // #7 newsletter subscribe → welcome email + owner heads-up
+  | "newsletter_welcome" // #7 newsletter subscribe → welcome email + owner heads-up
+  | "blog_autopilot"; // #8 blog posts auto-generated + auto-published (events/trends/evergreen)
 
 export type AutomationStatus = "ok" | "failed" | "skipped";
 

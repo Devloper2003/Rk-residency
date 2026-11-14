@@ -13,6 +13,7 @@ import {
 import { notifyOwnerWhatsApp, runRecoverySweep } from "@/lib/booking-sync";
 import { maybeRunDailyOps, runReviewSweepNow } from "@/lib/daily-ops";
 import { emailShell, readAutomationState, sendGuestEmail, sharePostToFacebook, siteUrl } from "@/lib/guest-messages";
+import { readAutopilotConfig, setAutopilotMode, maybeRunBlogAutopilot, type AutopilotMode } from "@/lib/blog-autopilot";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +31,7 @@ export const dynamic = "force-dynamic";
  * idempotent per booking/day/post even when run manually).
  */
 
-const AUTOMATION_IDS = ["contact_alert", "daily_digest", "review_request", "recovery_email", "fb_auto_share", "newsletter_welcome"] as const;
+const AUTOMATION_IDS = ["contact_alert", "daily_digest", "review_request", "recovery_email", "fb_auto_share", "newsletter_welcome", "blog_autopilot"] as const;
 
 interface CatalogItem {
   id: AutomationId;
@@ -42,6 +43,7 @@ interface CatalogItem {
   readyHint: string;
   lastRun?: { at: string; status: string; action: string; detail: string };
   count?: string;
+  mode?: AutopilotMode; // blog_autopilot only
 }
 
 async function getSettingValues(keys: string[]): Promise<Record<string, string>> {
@@ -62,6 +64,10 @@ async function emailReady(): Promise<boolean> {
 async function metaReady(): Promise<boolean> {
   const cfg = await getSettingValues(["meta_page_id", "meta_page_token"]);
   return !!cfg.meta_page_id && !!cfg.meta_page_token;
+}
+
+function aiReady(): boolean {
+  return !!process.env.ANTHROPIC_API_KEY;
 }
 
 const CATALOG: Omit<CatalogItem, "enabled" | "ready" | "readyHint" | "lastRun" | "count">[] = [
@@ -101,19 +107,28 @@ const CATALOG: Omit<CatalogItem, "enabled" | "ready" | "readyHint" | "lastRun" |
     description: "Newsletter subscriber ko turant branded welcome email (active offer ke saath) + aapko heads-up.",
     channel: "Email → subscriber",
   },
+  {
+    id: "blog_autopilot",
+    name: "Blog Autopilot",
+    description: "Blog AI se khud chalta hai: aapke content calendar ke live events, har month ek Vrindavan trending report aur evergreen guides — auto schedule/publish hote hain aur Facebook par bhi share ho jaate hain. Engagement badhta hai bina kuch kiye.",
+    channel: "Blog + Facebook",
+  },
 ];
 
 async function buildCatalog(): Promise<CatalogItem[]> {
-  const [cfg, logs, state, gwReady, emReady, metaOk, cancelledCount, publishedPosts, subscribers] = await Promise.all([
+  const [cfg, logs, state, gwReady, emReady, metaOk, aiOk, cancelledCount, publishedPosts, subscribers, calendarBacklog, autopilotCfg] = await Promise.all([
     readAutomationConfig(),
     readAutomationLogs(200),
     readAutomationState(),
     gatewayReady(),
     emailReady(),
     metaReady(),
+    Promise.resolve(aiReady()),
     db.booking.count({ where: { status: "CANCELLED", paidAmount: 0, guestEmail: { not: "" } } }),
     db.blogPost.count({ where: { status: "PUBLISHED" } }),
     db.newsletterSubscriber.count(),
+    db.contentCalendar.count({ where: { linkedPostId: null } }),
+    readAutopilotConfig(),
   ]);
 
   const readiness: Record<AutomationId, { ready: boolean; hint: string }> = {
@@ -141,6 +156,10 @@ async function buildCatalog(): Promise<CatalogItem[]> {
       ready: emReady,
       hint: emReady ? "" : "Site Settings me email_api_key (Resend) save karein",
     },
+    blog_autopilot: {
+      ready: aiOk,
+      hint: aiOk ? "" : "Vercel → Settings → Environment Variables me ANTHROPIC_API_KEY add karein (AI content generation ke liye)",
+    },
   };
 
   return CATALOG.map((item) => {
@@ -149,6 +168,7 @@ async function buildCatalog(): Promise<CatalogItem[]> {
     if (item.id === "recovery_email") count = `${cancelledCount} cancelled bookings (48h window me scan hota hai)`;
     if (item.id === "fb_auto_share") count = `${publishedPosts} published posts`;
     if (item.id === "newsletter_welcome") count = `${subscribers} subscribers`;
+    if (item.id === "blog_autopilot") count = `${calendarBacklog} calendar topics pending · ${publishedPosts} published posts`;
     return {
       ...item,
       enabled: cfg[item.id]?.enabled !== false,
@@ -156,6 +176,7 @@ async function buildCatalog(): Promise<CatalogItem[]> {
       readyHint: readiness[item.id].hint,
       lastRun: last ? { at: last.at, status: last.status, action: last.action, detail: last.detail } : undefined,
       count,
+      mode: item.id === "blog_autopilot" ? autopilotCfg.mode : undefined,
     };
   });
 }
@@ -250,6 +271,33 @@ async function runAutomation(id: AutomationId): Promise<{ detail: string; ok: bo
       );
       return { ok: res.ok, detail: res.ok ? `Test welcome email ${to} par bhej diya` : `Send fail: ${res.error || "unknown"}` };
     }
+    case "blog_autopilot": {
+      const res = await maybeRunBlogAutopilot({ force: true });
+      if (!res.ran) {
+        const hint =
+          res.reason === "automation disabled in admin"
+            ? "automation OFF hai — pehle switch ON karein"
+            : res.reason === "ANTHROPIC_API_KEY not configured"
+              ? "Vercel env me ANTHROPIC_API_KEY configure karein"
+              : res.reason || "run skip ho gaya";
+        return { ok: true, detail: `Autopilot run nahi hua: ${hint}` };
+      }
+      if (res.generated.length === 0) {
+        return { ok: true, detail: "Koi topic pending nahi tha — calendar backlog, trending report aur evergreen rotation sab up-to-date hai" };
+      }
+      const okPosts = res.generated.filter((g) => g.outcome !== "failed");
+      const summaryBits = okPosts.map((g) => {
+        const verb = g.outcome === "published" ? "published" : g.outcome === "scheduled" ? "scheduled" : "draft";
+        return `"${g.title}" ${verb}`;
+      });
+      const failed = res.generated.filter((g) => g.outcome === "failed");
+      return {
+        ok: okPosts.length > 0,
+        detail:
+          `${okPosts.length} post(s): ${summaryBits.join(", ")}` +
+          (failed.length ? ` · ${failed.length} fail hua (${failed[0].detail.slice(0, 80)})` : ""),
+      };
+    }
   }
 }
 
@@ -262,6 +310,11 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("run"),
     automation: z.enum(AUTOMATION_IDS),
+  }),
+  z.object({
+    action: z.literal("config"),
+    automation: z.literal("blog_autopilot"),
+    mode: z.enum(["auto_drip", "instant", "draft_only"]),
   }),
   z.object({ action: z.literal("clear_logs") }),
 ]);
@@ -309,6 +362,21 @@ export async function POST(req: Request) {
         },
       });
       return NextResponse.json({ ok: true, automation, enabled });
+    }
+
+    if (parsed.data.action === "config") {
+      const { automation, mode } = parsed.data;
+      await setAutopilotMode(mode);
+      await db.auditLog.create({
+        data: {
+          adminId: admin.id,
+          action: "AUTOMATION_CONFIG",
+          entity: "Automation",
+          entityId: automation,
+          details: `${automation} mode → ${mode}`,
+        },
+      });
+      return NextResponse.json({ ok: true, automation, mode });
     }
 
     if (parsed.data.action === "clear_logs") {

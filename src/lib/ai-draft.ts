@@ -17,7 +17,7 @@
 import { clampText, slugifyTitle, calcReadingMins } from "@/lib/blog-utils";
 
 export const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_URL = `${process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com"}/v1/messages`;
 const MAX_ATTEMPTS = 3;
 
 /** Internal-link targets the generator may suggest (all real site pages). */

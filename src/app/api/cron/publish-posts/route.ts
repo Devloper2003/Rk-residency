@@ -4,6 +4,7 @@ import { verifyCronOrAdmin } from "@/lib/cron-auth";
 import { revalidatePostPaths } from "@/lib/blog-publish";
 import { sweepBookings } from "@/lib/booking-sync";
 import { maybeRunDailyOps } from "@/lib/daily-ops";
+import { maybeRunBlogAutopilot } from "@/lib/blog-autopilot";
 import { sharePostToFacebook } from "@/lib/guest-messages";
 
 export const dynamic = "force-dynamic";
@@ -115,6 +116,17 @@ async function runScheduler() {
     console.error("[/api/cron/publish-posts] booking sweep failed:", e);
   }
 
+  // 4) Blog Autopilot fallback (#8) — generate + schedule/publish AI posts
+  //    (calendar events → monthly trending report → evergreen rotation).
+  //    Self-guarded: 6h cooldown + weekly AI spend cap make hourly calls
+  //    cheap no-ops unless new content is actually due.
+  let autopilot: Awaited<ReturnType<typeof maybeRunBlogAutopilot>> | null = null;
+  try {
+    autopilot = await maybeRunBlogAutopilot();
+  } catch (e) {
+    console.error("[/api/cron/publish-posts] blog autopilot fallback failed:", e);
+  }
+
   return {
     ok: true,
     publishedNow,
@@ -122,6 +134,9 @@ async function runScheduler() {
     fb: { shared: fbShared, failed: fbSharedFailed },
     dailyOps,
     bookingSweep,
+    autopilot: autopilot
+      ? { ran: autopilot.ran, reason: autopilot.reason || null, generated: autopilot.generated.length }
+      : null,
     at: now.toISOString(),
   };
 }

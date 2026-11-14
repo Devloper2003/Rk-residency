@@ -13,7 +13,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Bell, BarChart3, Star, MailWarning, Facebook, Mail, Zap, Play,
   Loader2, RefreshCw, Trash2, CheckCircle2, XCircle, MinusCircle,
-  AlertTriangle, PowerOff, ShieldAlert, Workflow,
+  AlertTriangle, PowerOff, ShieldAlert, Workflow, Newspaper,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { adminFetch, LoadingSpinner, ErrorState } from "./_shared";
@@ -29,6 +29,7 @@ interface CatalogItem {
   readyHint: string;
   lastRun?: { at: string; status: string; action: string; detail: string };
   count?: string;
+  mode?: "auto_drip" | "instant" | "draft_only";
 }
 
 interface LogEntry {
@@ -53,6 +54,7 @@ const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   recovery_email: MailWarning,
   fb_auto_share: Facebook,
   newsletter_welcome: Mail,
+  blog_autopilot: Newspaper,
 };
 
 const AUTO_LABEL: Record<string, string> = {
@@ -62,6 +64,13 @@ const AUTO_LABEL: Record<string, string> = {
   recovery_email: "Recovery Email",
   fb_auto_share: "FB Auto-Share",
   newsletter_welcome: "Welcome Email",
+  blog_autopilot: "Blog Autopilot",
+};
+
+const MODE_LABEL: Record<string, string> = {
+  auto_drip: "Auto: drip schedule + publish (recommended)",
+  instant: "Auto: publish instantly",
+  draft_only: "Sirf drafts — review ke baad main publish karunga",
 };
 
 function fmtIST(iso: string): string {
@@ -115,6 +124,7 @@ export function AutomationsTab() {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("all");
   const [clearing, setClearing] = useState(false);
+  const [savingMode, setSavingMode] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -183,6 +193,22 @@ export function AutomationsTab() {
     }
   };
 
+  const setMode = async (item: CatalogItem, mode: string) => {
+    setSavingMode(true);
+    try {
+      const res = await adminFetch<{ ok: boolean }>("/api/admin/automations", {
+        method: "POST",
+        body: JSON.stringify({ action: "config", automation: "blog_autopilot", mode }),
+      });
+      if (res) toast.success(`Blog Autopilot mode: ${MODE_LABEL[mode]?.split(" ").slice(0, 3).join(" ") || mode}`);
+    } catch (e) {
+      toast.error("Mode save fail", { description: e instanceof Error ? e.message : "Please try again" });
+    } finally {
+      setSavingMode(false);
+      load();
+    }
+  };
+
   if (!data && !error) return <LoadingSpinner />;
   if (error && !data) return <ErrorState title="Automations load nahi hui" message={error} onRetry={load} />;
 
@@ -194,11 +220,11 @@ export function AutomationsTab() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2 rounded-full border border-teal/20 bg-teal/5 px-4 py-1.5 font-display text-xs text-teal">
           <Zap className="h-3.5 w-3.5" />
-          {data?.summary.enabled ?? 0}/{data?.summary.total ?? 6} automations ON
+          {data?.summary.enabled ?? 0}/{data?.summary.total ?? 7} automations ON
         </div>
         <div className="flex items-center gap-2 rounded-full border border-charcoal/15 bg-charcoal/5 px-4 py-1.5 font-display text-xs text-charcoal-soft">
           <Workflow className="h-3.5 w-3.5" />
-          {data?.summary.ready ?? 0}/6 setup complete
+          {data?.summary.ready ?? 0}/{data?.summary.total ?? 7} setup complete
         </div>
         {data?.summary.lastActivityAt && (
           <div className="font-display text-[11px] text-charcoal-soft">
@@ -281,8 +307,36 @@ export function AutomationsTab() {
                   {item.id === "fb_auto_share" && "agla unshared post share"}
                   {item.id === "contact_alert" && "aapko test alert"}
                   {item.id === "newsletter_welcome" && "aapko test email"}
+                  {item.id === "blog_autopilot" && "agla pending post generate + publish"}
                 </span>
               </div>
+
+              {/* Blog Autopilot — publish mode selector */}
+              {item.id === "blog_autopilot" && (
+                <div className="mt-3 rounded-xl border border-charcoal/10 bg-ivory-deep/40 px-3 py-2.5">
+                  <label className="mb-1.5 block font-display text-[10px] font-semibold uppercase tracking-wider text-charcoal-soft">
+                    Publish mode
+                  </label>
+                  <select
+                    value={item.mode || "auto_drip"}
+                    onChange={(e) => setMode(item, e.target.value)}
+                    disabled={savingMode}
+                    className="w-full rounded-lg border border-charcoal/15 bg-white px-2.5 py-1.5 font-display text-xs text-charcoal outline-none focus:border-teal/40 disabled:opacity-50"
+                    aria-label="Blog autopilot publish mode"
+                  >
+                    {Object.entries(MODE_LABEL).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                  <p className="mt-1.5 font-display text-[10px] leading-relaxed text-charcoal-soft/80">
+                    {item.mode === "instant"
+                      ? "Post generate hote hi live + FB share — turant traffic chahiye toh ye choose karein."
+                      : item.mode === "draft_only"
+                        ? "Kuch bhi auto-publish nahi hoga — har post aapke review ke liye drafts me aayegi."
+                        : "Recommended: har post ~3 din ke gap par auto-schedule hota hai — blog + FB dono par steady engagement."}
+                  </p>
+                </div>
+              )}
             </div>
           );
         })}
