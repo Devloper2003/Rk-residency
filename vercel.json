@@ -5,6 +5,10 @@
       "schedule": "0 6 * * *"
     },
     {
+      "path": "/api/cron/daily-ops",
+      "schedule": "30 2 * * *"
+    },
+    {
       "path": "/api/cron/monthly-drafts",
       "schedule": "0 5 1 * *"
     }

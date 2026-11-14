@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { rateLimit } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
+import { notifyOwnerWhatsApp } from "@/lib/booking-sync";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +39,31 @@ export async function POST(req: Request) {
         message: parsed.data.message,
         topic: parsed.data.topic,
       },
+    });
+
+    const topicLabel: Record<string, string> = {
+      GENERAL: "General",
+      BOOKING: "Booking",
+      EVENTS: "Event",
+      PRESS: "Press",
+    };
+    const contactText =
+      `*NEW ENQUIRY — RK Residency*\n` +
+      `Name: ${parsed.data.name}\n` +
+      `Phone: ${parsed.data.phone || "—"}\n` +
+      `Email: ${parsed.data.email}\n` +
+      `Topic: ${topicLabel[parsed.data.topic] || parsed.data.topic}\n` +
+      `Subject: ${parsed.data.subject}\n` +
+      `Message: ${parsed.data.message.slice(0, 300)}`;
+    // Fire-and-forget via after(): the guest's response never depends on the
+    // gateway, but the alert still survives the response on serverless.
+    after(async () => {
+      try {
+        const ok = await notifyOwnerWhatsApp(contactText);
+        console.log("[/api/contact] owner WhatsApp alert:", ok ? "sent" : "skipped (gateway off or failed)");
+      } catch (e) {
+        console.error("[/api/contact] owner alert failed:", e);
+      }
     });
 
     return NextResponse.json({ ok: true });

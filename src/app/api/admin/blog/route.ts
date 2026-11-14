@@ -9,6 +9,7 @@ import {
   countVerifyMarkers,
 } from "@/lib/blog-utils";
 import { revalidatePostPaths } from "@/lib/blog-publish";
+import { sharePostToFacebook } from "@/lib/guest-messages";
 
 export const dynamic = "force-dynamic";
 
@@ -208,6 +209,16 @@ export async function POST(req: Request) {
         data: { adminId: admin.id, action: "BLOG_CREATED", entity: "BlogPost", entityId: post.id, details: `Created post ${post.title} (${post.status})` },
       });
       revalidatePostPaths(post.slug);
+      // Facebook auto-share for posts created directly as PUBLISHED
+      // (scheduled posts are shared by the publish-posts cron instead).
+      if (sched.status === "PUBLISHED") {
+        try {
+          const fb = await sharePostToFacebook(post);
+          if (fb.ok) console.log(`[/api/admin/blog POST] shared to Facebook: ${post.slug}`);
+        } catch (fbErr) {
+          console.error("[/api/admin/blog POST] FB share failed:", fbErr);
+        }
+      }
       return NextResponse.json({ ok: true, post, warnings: await collectWarnings(d, post.id) });
     } catch (e) {
       if (slugConflict(e)) {
@@ -242,6 +253,7 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "Invalid scheduling data" }, { status: 422 });
     }
     try {
+      const prevPost = await db.blogPost.findUnique({ where: { id: d.id }, select: { status: true } });
       const post = await db.blogPost.update({
         where: { id: d.id },
         data: {
@@ -263,6 +275,17 @@ export async function PATCH(req: Request) {
         data: { adminId: admin.id, action: "BLOG_UPDATED", entity: "BlogPost", entityId: post.id, details: `Updated post ${post.title} (${post.status})` },
       });
       revalidatePostPaths(post.slug);
+      // Facebook auto-share when a post TRANSITIONS to PUBLISHED from the
+      // admin panel — editing an already-published post does not re-share
+      // (the automation_state marker also guards against duplicates).
+      if (sched.status === "PUBLISHED" && prevPost?.status !== "PUBLISHED") {
+        try {
+          const fb = await sharePostToFacebook(post);
+          if (fb.ok) console.log(`[/api/admin/blog PATCH] shared to Facebook: ${post.slug}`);
+        } catch (fbErr) {
+          console.error("[/api/admin/blog PATCH] FB share failed:", fbErr);
+        }
+      }
       return NextResponse.json({ ok: true, post, warnings: await collectWarnings(d, post.id) });
     } catch (e) {
       if (slugConflict(e)) {

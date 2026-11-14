@@ -1,6 +1,8 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { rateLimit } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
+import { notifyOwnerWhatsApp } from "@/lib/booking-sync";
+import { emailShell, sendGuestEmail, siteUrl } from "@/lib/guest-messages";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -38,12 +40,49 @@ export async function POST(req: Request) {
       );
     }
 
-    await db.newsletterSubscriber.create({
+    const subscriber = await db.newsletterSubscriber.create({
       data: {
         email: parsed.data.email.toLowerCase(),
         name: parsed.data.name,
         language: parsed.data.language,
       },
+    });
+
+    // Automation (fire-and-forget via after() — survives the response on
+    // serverless, never blocks or fails the subscription itself):
+    //   1. owner heads-up on WhatsApp
+    //   2. welcome email with the current active offer, if one is running
+    after(async () => {
+      try {
+        const ok = await notifyOwnerWhatsApp(`*NEW SUBSCRIBER — RK Residency*\n${subscriber.email}`);
+        console.log("[/api/newsletter] owner WhatsApp alert:", ok ? "sent" : "skipped (gateway off or failed)");
+      } catch (e) {
+        console.error("[/api/newsletter] owner alert failed:", e);
+      }
+      try {
+        const now = new Date();
+        const offer = await db.offer.findFirst({
+          where: { validFrom: { lte: now }, validUntil: { gte: now } },
+          orderBy: { createdAt: "desc" },
+          select: { title: true, tagline: true, discountPct: true, slug: true },
+        });
+        const offerHtml = offer
+          ? `<p style="margin:12px 0;padding:14px 18px;background:#ecfdf5;border-left:4px solid #0f766e;border-radius:8px;"><b>Current offer: ${offer.title}</b>${offer.discountPct ? ` — ${offer.discountPct}% off` : ""}<br/><span style="color:#475569;">${offer.tagline || ""}</span></p>`
+          : "";
+        const html = emailShell(
+          "Welcome to the RK Residency family",
+          `<p>Namaste${subscriber.name ? ` ${subscriber.name}` : ""},</p>` +
+            `<p>Thank you for subscribing. Aap sabse pehle payenge humare Vrindavan stay deals, festival packages aur special offers — seedha aapke inbox me.</p>` +
+            offerHtml +
+            `<p>Tab tak ke liye, website par apni agli stay book kar sakte hain.</p>`,
+          offer ? "Offer Dekhein" : "Rooms & Booking",
+          offer ? `${siteUrl()}/offers` : `${siteUrl()}/`
+        );
+        await sendGuestEmail(subscriber.email, "Welcome! RK Residency, Vrindavan", html);
+        console.log("[/api/newsletter] welcome email attempted for", subscriber.email);
+      } catch (e) {
+        console.error("[/api/newsletter] welcome email failed:", e);
+      }
     });
 
     return NextResponse.json({ ok: true });
