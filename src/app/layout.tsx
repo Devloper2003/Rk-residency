@@ -9,6 +9,7 @@ import { VisitorTracker } from "@/components/rk/VisitorTracker";
 import { GoogleTagManager } from "@/components/rk/GoogleTagManager";
 import { GoogleAnalytics } from "@/components/rk/GoogleAnalytics";
 import { SITE_URL } from "@/lib/site.config";
+import { OG_IMAGE_DEFAULT, OG_IMAGE_WIDTH, OG_IMAGE_HEIGHT } from "@/lib/seo";
 import { GlobalBookingWidget } from "@/components/rk/GlobalBookingWidget";
 import { GlobalChrome } from "@/components/rk/GlobalChrome";
 import { ThemeProvider } from "@/components/rk/ThemeProvider";
@@ -72,9 +73,11 @@ const baseMetadata: Metadata = {
     type: "website",
     images: [
       {
-        url: "/images/hero-vrindavan.webp",
-        width: 1344,
-        height: 768,
+        // WhatsApp-safe JPEG cover — chat apps (WhatsApp/iMessage) do not
+        // render WebP previews, so og:image must always be a 1200x630 JPEG.
+        url: OG_IMAGE_DEFAULT,
+        width: OG_IMAGE_WIDTH,
+        height: OG_IMAGE_HEIGHT,
         alt: "RK Residency — golden-hour view of Vrindavan temple skyline",
       },
     ],
@@ -84,7 +87,7 @@ const baseMetadata: Metadata = {
     title: "Hotel near Banke Bihari Mandir, Vrindavan | RK Residency",
     description:
       "Heritage hotel near Banke Bihari Mandir & ISKCON Vrindavan. Book direct for the best price.",
-    images: ["/images/hero-vrindavan.webp"],
+    images: [OG_IMAGE_DEFAULT],
   },
   robots: {
     index: true,

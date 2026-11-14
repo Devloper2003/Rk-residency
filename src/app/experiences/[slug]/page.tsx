@@ -19,7 +19,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     // Self-referencing canonical for every experience detail page.
     alternates: { canonical: absUrl(`/experiences/${slug}`) },
     openGraph: pageOpenGraph({ path: `/experiences/${slug}`, title, description, image }),
-    twitter: pageTwitter({ title, description, image }),
+    twitter: pageTwitter({ title, description, image, path: `/experiences/${slug}` }),
   };
 }
 
