@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { notifyOwnerWhatsApp } from "@/lib/booking-sync";
+import { isAutomationEnabled, logAutomation } from "@/lib/automation-manager";
 import {
   emailShell,
   istDayStartUTC,
@@ -228,13 +229,18 @@ export interface DailyOpsResult {
  * marker); the review sweep is idempotent per booking (reviewSent markers).
  * Safe to call from multiple cron entrypoints.
  */
-export async function maybeRunDailyOps(): Promise<DailyOpsResult> {
+export async function maybeRunDailyOps(opts?: { force?: boolean }): Promise<DailyOpsResult> {
   const now = new Date();
   const state = await readAutomationState();
   const today = todayIST(now);
 
   let digest: DailyOpsResult["digest"] = { sent: false };
-  if (state.digestSentOn === today) {
+  const digestEnabled = await isAutomationEnabled("daily_digest");
+  if (!digestEnabled) {
+    // Owner switched this automation off — skip WITHOUT marking the day, so
+    // re-enabling later the same day still gets a fresh digest.
+    digest = { sent: false, reason: "disabled_by_admin" };
+  } else if (state.digestSentOn === today && !opts?.force) {
     digest = { sent: false, reason: "already_sent_today" };
   } else {
     try {
@@ -245,18 +251,57 @@ export async function maybeRunDailyOps(): Promise<DailyOpsResult> {
       // Mark the day as done either way — a silent gateway should not retry
       // the digest on every admin page load; tomorrow's run gets a fresh try.
       await markDigestSent(today);
+      await logAutomation(
+        "daily_digest",
+        opts?.force ? "digest (manual run)" : "digest",
+        ok ? "ok" : "failed",
+        ok
+          ? `Sent to owner WhatsApp — ${arrivalsPreview(text)}`
+          : "Gateway off/failed — check Admin → Payment Settings → WhatsApp"
+      );
     } catch (e) {
       console.error("[daily-ops] digest failed:", e);
       digest = { sent: false, reason: "error" };
+      await logAutomation("daily_digest", "digest", "failed", "Unexpected error building/sending digest");
     }
   }
 
   let reviews: DailyOpsResult["reviews"] = { found: 0, sent: 0 };
-  try {
-    reviews = await runReviewSweep(now, state);
-  } catch (e) {
-    console.error("[daily-ops] review sweep failed:", e);
+  const reviewsEnabled = await isAutomationEnabled("review_request");
+  if (reviewsEnabled) {
+    try {
+      reviews = await runReviewSweep(now, state);
+      // Log only when there was something to do — an empty daily sweep would
+      // drown the activity log in noise.
+      if (reviews.found > 0) {
+        await logAutomation(
+          "review_request",
+          "review sweep",
+          reviews.sent === reviews.found ? "ok" : "failed",
+          `${reviews.sent}/${reviews.found} checkout guests ko Google review request bheji`
+        );
+      }
+    } catch (e) {
+      console.error("[daily-ops] review sweep failed:", e);
+      await logAutomation("review_request", "review sweep", "failed", "Sweep error — see server logs");
+    }
   }
 
   return { digest, reviews, at: now.toISOString() };
+}
+
+/** First numeric line of the digest (arrivals count) for a compact log detail. */
+function arrivalsPreview(text: string): string {
+  const m = text.match(/Arrivals today: (\d+)/);
+  return m ? `${m[1]} arrivals today` : "daily stats";
+}
+
+/**
+ * Manual "Run now" entry for Admin → Automations. Bypasses the once-per-day
+ * digest marker (force) so the owner can test/preview immediately; the review
+ * sweep stays idempotent per booking (never spams the same guest twice).
+ */
+export async function runReviewSweepNow(): Promise<{ found: number; sent: number }> {
+  const state = await readAutomationState();
+  return runReviewSweep(new Date(), state);
 }

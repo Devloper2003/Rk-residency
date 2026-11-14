@@ -1,5 +1,6 @@
 import Razorpay from "razorpay";
 import { db } from "@/lib/db";
+import { isAutomationEnabled, logAutomation } from "@/lib/automation-manager";
 import { payableNow, modeLabel } from "@/lib/payment-modes";
 import { internalApiSecret } from "@/lib/internal-secret";
 import {
@@ -507,54 +508,7 @@ export async function sweepBookings(): Promise<SweepResult> {
     //     the automation_state SiteSetting; a 48h look-back bounds the scan,
     //     so a disabled/unconfigured email sender can never retry-storm).
     try {
-      const recState = await readAutomationState();
-      const recFrom = new Date(Date.now() - RECOVERY_LOOKBACK_HOURS * 3_600_000);
-      const recTo = new Date(Date.now() - RECOVERY_DELAY_MINUTES * 60_000);
-      const candidates = await db.booking.findMany({
-        where: {
-          status: "CANCELLED",
-          paymentMethod: { in: ["PREPAID", "PARTIAL_PAID"] },
-          paymentStatus: { in: ["PENDING", "FAILED"] },
-          paidAmount: 0,
-          guestEmail: { not: "" },
-          updatedAt: { gte: recFrom, lte: recTo },
-        },
-        select: {
-          id: true,
-          referenceCode: true,
-          guestName: true,
-          guestEmail: true,
-          checkIn: true,
-          checkOut: true,
-          nights: true,
-        },
-        orderBy: { updatedAt: "desc" },
-        take: MAX_RECOVERY_PER_SWEEP,
-      });
-      const todo = candidates.filter((b) => !recState.recoverySent?.[b.id]);
-      for (const b of todo) {
-        const first = b.guestName.split(" ")[0] || b.guestName;
-        const html = emailShell(
-          "Aapka booking adhura reh gaya",
-          `<p>Namaste ${first},</p>` +
-            `<p>Aapki booking <b>${b.referenceCode}</b> (${fmtDate(b.checkIn)} → ${fmtDate(b.checkOut)}, ${b.nights} night${b.nights > 1 ? "s" : ""}) ke liye online payment complete nahi ho paya, isliye slot release ho gaya hai.</p>` +
-            `<p>Agar aap abhi bhi Vrindavan aana chahte hain, website par jaldi se dobara booking karein — rooms availability pehle aayi, pehle paao.</p>`,
-          "Website par Booking Karein",
-          `${siteUrl()}/`
-        );
-        const email = await sendGuestEmail(
-          b.guestEmail,
-          "Aapka booking complete nahi hua — RK Residency",
-          html
-        );
-        // Mark attempted regardless of delivery outcome: this sweep runs on
-        // live traffic, and a failed send retried every minute would be spam.
-        await markAutomationDone("recoverySent", b.id);
-        console.log(
-          `[booking-sync] recovery email ${b.referenceCode}: ${email.ok ? "sent" : `failed:${email.error || "unknown"}`}`
-        );
-      }
-      result.recovered = todo.length;
+      result.recovered = (await runRecoverySweep()).sent;
     } catch (e) {
       console.error("[booking-sync] recovery sweep failed:", e);
     }
@@ -563,6 +517,74 @@ export async function sweepBookings(): Promise<SweepResult> {
     result.skipped = true;
   }
   return result;
+}
+
+/**
+ * Abandoned-booking recovery sweep (automation #5) — also the "Run now"
+ * entrypoint for Admin → Automations. Idempotent per booking via the
+ * recoverySent marker; respects the admin on/off switch (silent skip).
+ */
+export async function runRecoverySweep(): Promise<{ found: number; sent: number }> {
+  if (!(await isAutomationEnabled("recovery_email"))) return { found: 0, sent: 0 };
+
+  const recState = await readAutomationState();
+  const recFrom = new Date(Date.now() - RECOVERY_LOOKBACK_HOURS * 3_600_000);
+  const recTo = new Date(Date.now() - RECOVERY_DELAY_MINUTES * 60_000);
+  const candidates = await db.booking.findMany({
+    where: {
+      status: "CANCELLED",
+      paymentMethod: { in: ["PREPAID", "PARTIAL_PAID"] },
+      paymentStatus: { in: ["PENDING", "FAILED"] },
+      paidAmount: 0,
+      guestEmail: { not: "" },
+      updatedAt: { gte: recFrom, lte: recTo },
+    },
+    select: {
+      id: true,
+      referenceCode: true,
+      guestName: true,
+      guestEmail: true,
+      checkIn: true,
+      checkOut: true,
+      nights: true,
+    },
+    orderBy: { updatedAt: "desc" },
+    take: MAX_RECOVERY_PER_SWEEP,
+  });
+  const todo = candidates.filter((b) => !recState.recoverySent?.[b.id]);
+  let sent = 0;
+  for (const b of todo) {
+    const first = b.guestName.split(" ")[0] || b.guestName;
+    const html = emailShell(
+      "Aapka booking adhura reh gaya",
+      `<p>Namaste ${first},</p>` +
+        `<p>Aapki booking <b>${b.referenceCode}</b> (${fmtDate(b.checkIn)} → ${fmtDate(b.checkOut)}, ${b.nights} night${b.nights > 1 ? "s" : ""}) ke liye online payment complete nahi ho paya, isliye slot release ho gaya hai.</p>` +
+        `<p>Agar aap abhi bhi Vrindavan aana chahte hain, website par jaldi se dobara booking karein — rooms availability pehle aayi, pehle paao.</p>`,
+      "Website par Booking Karein",
+      `${siteUrl()}/`
+    );
+    const email = await sendGuestEmail(
+      b.guestEmail,
+      "Aapka booking complete nahi hua — RK Residency",
+      html
+    );
+    // Mark attempted regardless of delivery outcome: this sweep runs on
+    // live traffic, and a failed send retried every minute would be spam.
+    await markAutomationDone("recoverySent", b.id);
+    await logAutomation(
+      "recovery_email",
+      `recovery email ${b.referenceCode}`,
+      email.ok ? "ok" : "failed",
+      email.ok
+        ? `${b.guestName} (${b.guestEmail}) ko rebooking email bheji`
+        : `Send failed: ${email.error || "unknown"} — Resend config check karein`
+    );
+    console.log(
+      `[booking-sync] recovery email ${b.referenceCode}: ${email.ok ? "sent" : `failed:${email.error || "unknown"}`}`
+    );
+    if (email.ok) sent++;
+  }
+  return { found: candidates.length, sent };
 }
 
 // ---------------------------------------------------------------------------

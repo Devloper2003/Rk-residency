@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { isAutomationEnabled, logAutomation } from "@/lib/automation-manager";
 import { publishPagePost } from "@/lib/meta-marketing";
 
 /**
@@ -300,6 +301,11 @@ export async function sharePostToFacebook(post: {
   excerpt: string | null;
   slug: string;
 }): Promise<{ ok: boolean; reason?: string }> {
+  // Admin → Automations switch. Silent skip WITHOUT the shared marker, so
+  // re-enabling the automation (or a manual "Run now") can still share it.
+  if (!(await isAutomationEnabled("fb_auto_share"))) {
+    return { ok: false, reason: "automation_disabled" };
+  }
   const state = await readAutomationState();
   if (state.fbShared?.[post.id]) return { ok: false, reason: "already_shared" };
 
@@ -309,6 +315,12 @@ export async function sharePostToFacebook(post: {
   });
   const cfg = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   if (!cfg.meta_page_id || !cfg.meta_page_token) {
+    await logAutomation(
+      "fb_auto_share",
+      `FB share "${post.title}"`,
+      "skipped",
+      "Facebook page connected nahi hai — Admin → Marketing me connect karein"
+    );
     return { ok: false, reason: "meta_not_connected" };
   }
 
@@ -319,6 +331,14 @@ export async function sharePostToFacebook(post: {
   // Mark the attempt regardless of gateway outcome — retried shares are the
   // bigger evil (duplicate posts); failures are logged for the owner.
   await markAutomationDone("fbShared", post.id);
+  await logAutomation(
+    "fb_auto_share",
+    `FB share "${post.title}"`,
+    res.ok ? "ok" : "failed",
+    res.ok
+      ? `Facebook page par post kiya — ${link}`
+      : "Facebook publish failed — Meta connection refresh karein (Admin → Marketing)"
+  );
   if (!res.ok) {
     console.error("[fb-share] publish failed:", res.status, JSON.stringify(res.data)?.slice(0, 300));
     return { ok: false, reason: "publish_failed" };

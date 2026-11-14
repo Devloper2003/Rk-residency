@@ -2,6 +2,7 @@ import { after, NextResponse } from "next/server";
 import { rateLimit } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
 import { notifyOwnerWhatsApp } from "@/lib/booking-sync";
+import { isAutomationEnabled, logAutomation } from "@/lib/automation-manager";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -57,9 +58,19 @@ export async function POST(req: Request) {
       `Message: ${parsed.data.message.slice(0, 300)}`;
     // Fire-and-forget via after(): the guest's response never depends on the
     // gateway, but the alert still survives the response on serverless.
+    // Admin → Automations switch controls it (silent skip when off).
     after(async () => {
       try {
+        if (!(await isAutomationEnabled("contact_alert"))) return;
         const ok = await notifyOwnerWhatsApp(contactText);
+        await logAutomation(
+          "contact_alert",
+          `enquiry alert — ${parsed.data.name}`,
+          ok ? "ok" : "failed",
+          ok
+            ? `${parsed.data.name} ki enquiry owner WhatsApp par pahunchi (${parsed.data.phone || parsed.data.email})`
+            : "Gateway off/failed — Admin → Payment Settings → WhatsApp Notifications check karein"
+        );
         console.log("[/api/contact] owner WhatsApp alert:", ok ? "sent" : "skipped (gateway off or failed)");
       } catch (e) {
         console.error("[/api/contact] owner alert failed:", e);

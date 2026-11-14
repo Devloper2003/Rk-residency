@@ -8,7 +8,7 @@ import {
   Tag, FileText, ShieldCheck, Edit, Sparkles, Warehouse, PlusCircle,
   BarChart3, Users, Search, ExternalLink, Image as ImageIcon,
   Eye, EyeOff, MapPin, Utensils, Camera, CreditCard, Ticket,
-  Rocket, Megaphone,
+  Rocket, Megaphone, MailPlus, Workflow,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,13 +27,15 @@ type Tab =
   | "blog" | "calendar" | "reviews" | "content" | "theme"
   | "experiences" | "dining" | "gallery" | "payment" | "hero"
   | "settings" | "users" | "leads" | "audit" | "media" | "inventory" | "coupons"
-  | "booking-engine" | "marketing" | "seo";
+  | "booking-engine" | "marketing" | "seo" | "automations" | "email-marketing";
 
 const TABS: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }>; group: string }[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, group: "Overview" },
   { id: "analytics", label: "Analytics & SEO", icon: BarChart3, group: "Overview" },
   { id: "booking-engine", label: "Booking Engine", icon: Rocket, group: "Growth" },
   { id: "marketing", label: "Marketing Hub", icon: Megaphone, group: "Growth" },
+  { id: "automations", label: "Automations", icon: Workflow, group: "Growth" },
+  { id: "email-marketing", label: "Email Marketing", icon: MailPlus, group: "Growth" },
   { id: "bookings", label: "Bookings", icon: CalendarDays, group: "Operations" },
   { id: "inventory", label: "Inventory", icon: Warehouse, group: "Operations" },
   { id: "rooms", label: "Rooms & Rates", icon: BedDouble, group: "Operations" },
@@ -70,6 +72,8 @@ const TAB_FACTORIES: Record<Tab, TabFactory> = {
   analytics: () => import("./tabs/AnalyticsTab").then((m) => ({ default: m.AnalyticsTab })),
   "booking-engine": () => import("./tabs/BookingEngineTab").then((m) => ({ default: m.BookingEngineTab })),
   marketing: () => import("./tabs/MarketingTab").then((m) => ({ default: m.MarketingTab })),
+  automations: () => import("./tabs/AutomationsTab").then((m) => ({ default: m.AutomationsTab })),
+  "email-marketing": () => import("./tabs/EmailMarketingTab").then((m) => ({ default: m.EmailMarketingTab })),
   bookings: () => import("./tabs/BookingsTab").then((m) => ({ default: m.BookingsTab })),
   rooms: () => import("./tabs/RoomsTab").then((m) => ({ default: m.RoomsTab })),
   offers: () => import("./tabs/OffersTab").then((m) => ({ default: m.OffersTab })),
