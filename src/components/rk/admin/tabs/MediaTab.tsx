@@ -114,7 +114,7 @@ export function MediaTab() {
         multiple
         value={[]}
         onChange={() => reload()}
-        hint="Images are converted to WebP (max 1600px wide) and content-hashed so duplicates dedupe automatically."
+        hint="Any size works — large photos are auto-compressed in your browser first, then converted to WebP. Identical pictures dedupe automatically (no duplicate stored)."
       />
 
       <div className="flex items-center justify-between">

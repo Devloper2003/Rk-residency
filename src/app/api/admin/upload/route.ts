@@ -8,11 +8,15 @@ export const dynamic = "force-dynamic";
 
 /**
  * SEO: turn the original filename into a descriptive slug, e.g.
- * "Deluxe Room Interior.jpg" -> "deluxe-room-interior.webp".
- * Uploads are renamed so image URLs describe their content instead of
- * being random content hashes.
+ * "Deluxe Room Interior.jpg" -> "deluxe-room-interior". The final filename
+ * also carries a short content-hash suffix so that EVERY unique image gets
+ * a unique URL: /uploads/... is served with 1-year immutable cache headers,
+ * so a reused URL would keep showing the OLD cached image forever. The hash
+ * suffix makes the cache invariant true again (same bytes => same URL,
+ * different bytes => different URL), fixing the "new upload still shows the
+ * same image" bug after a delete + re-upload of a same-named file.
  */
-function slugifyFilename(originalName: string): string {
+function slugifyFilename(originalName: string, hash: string): string {
   const base = originalName.replace(/\.[^.]+$/, ""); // strip extension
   const slug = base
     .toLowerCase()
@@ -24,7 +28,7 @@ function slugifyFilename(originalName: string): string {
   // Guarantee a meaningful name even for gibberish originals like "IMG_0001"
   // — prefix keeps every upload tied to the site (nice in Google Images).
   const safe = slug || "image";
-  return `rk-residency-vrindavan-${safe}.webp`;
+  return `rk-residency-vrindavan-${safe}-${hash.slice(0, 8)}.webp`;
 }
 
 /** Find a unique filename in the DB, appending -2, -3… on collisions. */
@@ -100,6 +104,7 @@ export async function POST(req: Request) {
 
     const urls: string[] = [];
     const errors: string[] = [];
+    let deduped = 0;
 
     for (const file of rawFiles) {
       if (!(file instanceof File)) {
@@ -133,12 +138,13 @@ export async function POST(req: Request) {
         });
         if (existingByHash) {
           urls.push(`/uploads/${existingByHash.filename}`);
+          deduped++;
           continue;
         }
 
-        // Descriptive slug filename (+ suffix on collisions) instead of a
-        // random hash — image URLs become keyword-relevant.
-        const candidate = slugifyFilename(file.name || "image");
+        // Descriptive slug + short content-hash suffix (+ numeric fallback on
+        // the impossible-in-practice collision) — unique URL per unique image.
+        const candidate = slugifyFilename(file.name || "image", hash);
         const filename = await uniqueFilename(candidate);
 
         await db.mediaAsset.create({
@@ -155,11 +161,13 @@ export async function POST(req: Request) {
         urls.push(`/uploads/${filename}`);
       } catch (imgErr) {
         console.error(`[upload] Failed to process ${file.name}:`, imgErr);
-        errors.push(`${file.name}: Processing failed`);
+        errors.push(
+          `${file.name}: Could not process this image — the format may be unsupported (e.g. iPhone HEIC). Please convert it to JPG or PNG and try again.`
+        );
       }
     }
 
-    return NextResponse.json({ urls, errors });
+    return NextResponse.json({ urls, errors, deduped });
   } catch (e) {
     console.error("[/api/admin/upload POST] error:", e);
     return NextResponse.json({ error: "Upload failed" }, { status: 500 });

@@ -20,6 +20,47 @@ type Props = {
 };
 
 /**
+ * Vercel serverless functions reject request bodies over ~4.5 MB BEFORE our
+ * route ever runs (HTTP 413) — modern phone photos (3–8 MB) were silently
+ * dying there, which is why uploads “kept showing the same images”.
+ * Fix: downscale + re-encode oversized images IN THE BROWSER before upload.
+ * GIF/SVG pass through untouched (animation / vector data), PNG keeps its
+ * transparency, everything else is compressed as JPEG. If the browser cannot
+ * decode the file (e.g. HEIC outside Safari) the ORIGINAL is sent and the
+ * server decides — no regression, just a smaller, uploadable payload.
+ */
+const COMPRESS_OVER = 3.2 * 1024 * 1024; // stay safely under the 4.5 MB platform cap
+const MAX_WIDTH = 1600; // matches the server-side sharp resize
+
+async function compressForUpload(file: File): Promise<File> {
+  const passthrough = file.type === "image/gif" || file.type === "image/svg+xml";
+  if (file.size <= COMPRESS_OVER || passthrough) return file;
+  try {
+    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const scale = Math.min(1, MAX_WIDTH / bitmap.width);
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+    // PNG keeps transparency (alpha), everything else compresses as JPEG.
+    const type = file.type === "image/png" ? "image/png" : "image/jpeg";
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, type, 0.85)
+    );
+    if (!blob || blob.size >= file.size) return file; // compression didn't help
+    const name = file.name.replace(/\.[^.]+$/, "") + (type === "image/png" ? ".png" : ".jpg");
+    return new File([blob], name, { type });
+  } catch {
+    return file; // undecodable here — pass through, server handles it
+  }
+}
+
+/**
  * ImageUploader — drag-and-drop image picker wired to /api/admin/upload.
  *
  * - In single mode: shows one preview + "Replace" + "Remove" buttons.
@@ -45,8 +86,8 @@ export function ImageUploader({ value, multiple = false, onChange, label, hint, 
     : [];
 
   const uploadFiles = useCallback(async (files: FileList | File[]) => {
-    const arr = Array.from(files).filter((f) => f.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|avif|bmp|tiff?|svg|ico|heic|heif)$/i.test(f.name));
-    if (arr.length === 0) {
+    const picked = Array.from(files).filter((f) => f.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|avif|bmp|tiff?|svg|ico|heic|heif)$/i.test(f.name));
+    if (picked.length === 0) {
       toast.error("Please select an image file (PNG, JPG, WebP, GIF, SVG, etc.)");
       return;
     }
@@ -58,6 +99,16 @@ export function ImageUploader({ value, multiple = false, onChange, label, hint, 
     }
     setUploading(true);
     try {
+      // Compress oversized photos in the browser FIRST — Vercel rejects any
+      // request body over ~4.5 MB with an uncatchable 413, so a 6 MB phone
+      // photo would die before reaching the upload route.
+      const arr: File[] = [];
+      let compressedCount = 0;
+      for (const f of picked) {
+        const out = await compressForUpload(f);
+        if (out !== f) compressedCount++;
+        arr.push(out);
+      }
       const fd = new FormData();
       arr.forEach((f) => fd.append("files", f, f.name));
       fd.append("alt", altDraft.trim());
@@ -83,7 +134,7 @@ export function ImageUploader({ value, multiple = false, onChange, label, hint, 
               res.status === 401
                 ? "Your session has expired. Please sign out and sign back in to the admin panel, then try again."
                 : res.status === 413
-                ? "Image is too large. Maximum allowed size is 12 MB. Please use a smaller image."
+                ? "Image is still too large for the server (4.5 MB limit). Please use a smaller image."
                 : res.status === 404
                 ? "Upload endpoint not found. The site may be deploying — please try again in 30 seconds."
                 : `Upload failed (HTTP ${res.status}). The server returned a non-JSON response. Please try again.`
@@ -112,7 +163,14 @@ export function ImageUploader({ value, multiple = false, onChange, label, hint, 
         onChange(got[0]);
       }
       if (data.errors?.length) toast.warning(data.errors.join("; "));
-      else toast.success(`${got.length} image${got.length === 1 ? "" : "s"} uploaded`);
+      else toast.success(`${got.length} image${got.length === 1 ? "" : "s"} uploaded`, compressedCount ? { description: "Large photo(s) were auto-compressed in your browser before upload." } : undefined);
+      // Content-hash dedupe: identical bytes reuse the existing upload —
+      // explain that to the admin, otherwise it looks like "nothing happened".
+      if (data.deduped) {
+        toast.info(`${data.deduped} image${data.deduped === 1 ? " was" : "s were"} already in the library — reusing the existing upload (no duplicate stored).`, {
+          description: "Uploading the exact same picture again never creates a second copy. For a different photo, pick the new file and give it its own alt text.",
+        });
+      }
       setAltDraft(""); // uploaded — clear the alt field for the next batch
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Upload failed";
@@ -231,7 +289,7 @@ export function ImageUploader({ value, multiple = false, onChange, label, hint, 
             <p className="mt-1 font-display text-[10px] uppercase tracking-wider text-charcoal-soft">
               {multiple ? "Drop images or click to upload" : "Drop image or click to upload"}
             </p>
-            {!compact && <p className="font-display text-[10px] text-charcoal-soft/70">PNG · JPG · WebP · max 8 MB · converted to WebP</p>}
+            {!compact && <p className="font-display text-[10px] text-charcoal-soft/70">PNG · JPG · HEIC · WebP — any size, auto-compressed in your browser</p>}
           </>
         )}
       </div>
