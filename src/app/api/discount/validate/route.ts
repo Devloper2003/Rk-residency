@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { z } from "zod";
+import { rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,18 @@ const schema = z.object({
 });
 
 export async function POST(req: Request) {
+  // Coupon codes are single-use secrets — without this gate an attacker can
+  // brute-force the whole codespace (every other public endpoint that
+  // accepts guesses — bookings, contact, newsletter — is already limited).
+  // 10 tries/min/IP: a real guest retries a mistyped code a couple of
+  // times; code-space enumeration at that pace is useless.
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  if (!rateLimit(`coupon:${ip}`, 10, 60_000)) {
+    return NextResponse.json(
+      { ok: false, error: "Too many attempts. Please wait a minute." },
+      { status: 429 }
+    );
+  }
   try {
     const body = await req.json();
     const parsed = schema.safeParse(body);
