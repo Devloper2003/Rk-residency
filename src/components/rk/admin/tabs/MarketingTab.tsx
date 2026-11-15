@@ -18,6 +18,7 @@ type MetaStatus = {
   page: { id: string; name: string };
   instagram: { id: string; username: string };
   tokenExpires: string;
+  configId?: string;
   appMasked: string;
 };
 
@@ -26,6 +27,7 @@ type MetaAuth = {
   authUrl?: string;
   redirectUri: string;
   scopes: string;
+  configId?: string | null;
 };
 
 type Setting = { id: string; key: string; value: string; label?: string; configured?: boolean };
@@ -135,6 +137,9 @@ export function MarketingTab() {
   const [appIdInput, setAppIdInput] = useState("");
   const [appSecretInput, setAppSecretInput] = useState("");
   const [savingCreds, setSavingCreds] = useState(false);
+  const [configIdInput, setConfigIdInput] = useState("");
+  const [configIdTouched, setConfigIdTouched] = useState(false);
+  const [savingConfigId, setSavingConfigId] = useState(false);
   const [startingLogin, setStartingLogin] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [fbMessage, setFbMessage] = useState("");
@@ -184,6 +189,7 @@ export function MarketingTab() {
       if (status?.error) throw new Error(status.error);
       setMeta(status);
       setMetaAuth(auth);
+      if (!configIdTouched) setConfigIdInput(status.configId || "");
       setSettings(settingsData?.settings || []);
       if (!statsData?.error) setStats(statsData);
       const wa = (settingsData?.settings || []).find((s: Setting) => s.key === "whatsapp_number");
@@ -193,7 +199,8 @@ export function MarketingTab() {
     } finally {
       setBooting(false);
     }
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configIdTouched]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -246,6 +253,24 @@ export function MarketingTab() {
       toast.error("Save failed", { description: e instanceof Error ? e.message : "" });
     } finally {
       setSavingCreds(false);
+    }
+  };
+
+  const saveConfigId = async () => {
+    setSavingConfigId(true);
+    try {
+      const res = await adminFetch("/api/admin/marketing/meta", {
+        method: "POST",
+        body: JSON.stringify({ action: "save_config_id", configId: configIdInput.trim() }),
+      });
+      if (res?.error) throw new Error(res.error);
+      toast.success(res.configId ? "Config ID saved — ab login button try karein" : "Config ID cleared — classic scope mode");
+      setConfigIdTouched(true);
+      loadAll();
+    } catch (e) {
+      toast.error("Config ID save failed", { description: e instanceof Error ? e.message : "" });
+    } finally {
+      setSavingConfigId(false);
     }
   };
 
@@ -446,6 +471,29 @@ export function MarketingTab() {
                 Login with Facebook &amp; Instagram
               </Button>
             </div>
+
+            {/* Facebook Login for Business — config_id (permissions ka source) */}
+            <div className="rounded-xl border border-gold/30 bg-gold/5 p-3">
+              <p className="font-display text-xs text-charcoal-soft">
+                <strong className="text-gold-deep">Login popup me &ldquo;Invalid Scopes&rdquo; error aa raha hai?</strong> Naya Meta app <strong>Facebook Login for Business</strong> use karta hai — permissions <code className="font-mono">scope</code> se nahi, ek <strong>Login Configuration</strong> se aati hain. Fix (2 minute):
+              </p>
+              <ol className="mt-1.5 list-decimal space-y-0.5 pl-4 font-display text-xs text-charcoal-soft">
+                <li>Meta dashboard → <strong>Facebook Login for Business → Configurations → Create configuration</strong></li>
+                <li>Ye 5 permissions add karein: <code className="font-mono">pages_show_list</code>, <code className="font-mono">pages_read_engagement</code>, <code className="font-mono">pages_manage_posts</code>, <code className="font-mono">instagram_basic</code>, <code className="font-mono">instagram_content_publish</code></li>
+                <li>Configuration save karke uska <strong>config_id</strong> copy karein → neeche paste karke save karein</li>
+              </ol>
+              <div className="mt-2 flex flex-wrap items-end gap-2">
+                <div className="min-w-[220px] flex-1">
+                  <label className={labelCls()}>Login Configuration ID (config_id)</label>
+                  <input type="text" value={configIdInput} onChange={(e) => { setConfigIdInput(e.target.value); setConfigIdTouched(true); }} placeholder="e.g. 12345678901234567" className={inputCls()} />
+                </div>
+                <Button onClick={saveConfigId} disabled={savingConfigId} size="sm" className="rounded-full bg-teal text-ivory hover:bg-teal-deep">
+                  {savingConfigId ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />} Save config ID
+                </Button>
+              </div>
+              {meta.configId ? <p className="mt-1 font-display text-[11px] text-teal">Active config_id: <code className="font-mono">{meta.configId}</code> — login isse chalega</p> : <p className="mt-1 font-display text-[11px] text-charcoal-soft">Config ID khali hai — login classic scope mode me chalega (naye apps me &ldquo;Invalid Scopes&rdquo; dega)</p>}
+            </div>
+
             <details className="rounded-xl border border-charcoal/10 p-3">
               <summary className="cursor-pointer font-display text-xs font-semibold text-charcoal-soft">App ID change karna hai?</summary>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">

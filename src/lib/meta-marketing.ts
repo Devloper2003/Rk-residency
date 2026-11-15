@@ -111,15 +111,26 @@ export function verifyState(saved: string, received: string | null): boolean {
   return Number.isFinite(exp) && Date.now() <= exp;
 }
 
-export function buildAuthUrl(appId: string, redirectUri: string, state: string): string {
-  return (
+/**
+ * Build the OAuth dialog URL.
+ *
+ * Two modes:
+ *  - configId set  → Facebook Login for BUSINESS (the only product new Meta
+ *    apps get). Permissions come from the login CONFIGURATION (config_id) —
+ *    the `scope` param is NOT supported there and triggers "Invalid Scopes".
+ *  - configId empty → classic Facebook Login: permissions ride `scope`.
+ */
+export function buildAuthUrl(appId: string, redirectUri: string, state: string, configId?: string): string {
+  const base =
     `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth` +
     `?client_id=${encodeURIComponent(appId)}` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&state=${encodeURIComponent(state)}` +
-    `&scope=${encodeURIComponent(META_SCOPES)}` +
-    `&response_type=code`
-  );
+    `&response_type=code`;
+  if (configId) {
+    return `${base}&config_id=${encodeURIComponent(configId)}`;
+  }
+  return `${base}&scope=${encodeURIComponent(META_SCOPES)}`;
 }
 
 async function graph(path: string, params: Record<string, string>, method: "GET" | "POST" = "GET") {

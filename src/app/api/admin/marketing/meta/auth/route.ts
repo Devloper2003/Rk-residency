@@ -30,18 +30,29 @@ export async function GET(req: Request) {
   try {
     const appId = await getMetaSetting(db, "meta_app_id");
     const appSecret = await getMetaSetting(db, "meta_app_secret");
+    // Facebook Login for Business mode: apps created on the new Meta
+    // dashboard only have that product, and permissions ride a login
+    // CONFIGURATION (config_id) instead of the scope param — without it
+    // the dialog fails with "Invalid Scopes".
+    const configId = (await getMetaSetting(db, "meta_login_config_id")).trim();
     const redirectUri = metaRedirectUri(req);
     const configured = Boolean(appId && appSecret);
 
     if (!configured) {
-      return NextResponse.json({ configured: false, redirectUri, scopes: META_SCOPES });
+      return NextResponse.json({ configured: false, redirectUri, scopes: META_SCOPES, configId: configId || null });
     }
 
     // Single-use CSRF state (10-minute TTL), verified in the callback.
     const state = makeState();
     await putMetaSetting(db, "meta_oauth_state", state);
 
-    return NextResponse.json({ configured: true, authUrl: buildAuthUrl(appId, redirectUri, state), redirectUri, scopes: META_SCOPES });
+    return NextResponse.json({
+      configured: true,
+      authUrl: buildAuthUrl(appId, redirectUri, state, configId || undefined),
+      redirectUri,
+      scopes: META_SCOPES,
+      configId: configId || null,
+    });
   } catch (e) {
     console.error("[/api/admin/marketing/meta/auth] error:", e);
     return NextResponse.json({ error: "Failed to start Meta login" }, { status: 500 });

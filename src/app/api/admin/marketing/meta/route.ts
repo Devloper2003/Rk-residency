@@ -38,6 +38,7 @@ export async function GET(req: Request) {
       username: await getMetaSetting(db, "meta_ig_username"),
     },
     tokenExpires: await getMetaSetting(db, "meta_user_token_expires"),
+    configId: await getMetaSetting(db, "meta_login_config_id"),
     appMasked: appId ? `${appId.slice(0, 4)}••••${appId.slice(-4)}` : "",
   });
 }
@@ -46,6 +47,13 @@ const saveCredentialsSchema = z.object({
   action: z.literal("save_credentials"),
   appId: z.string().min(5),
   appSecret: z.string().min(10),
+});
+
+// Facebook Login for Business — login CONFIGURATION id (not a secret; it
+// identifies which permission set the OAuth dialog uses).
+const saveConfigIdSchema = z.object({
+  action: z.literal("save_config_id"),
+  configId: z.string().max(120),
 });
 
 const publishFbSchema = z.object({
@@ -65,7 +73,7 @@ export async function POST(req: Request) {
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const parsed = z.union([saveCredentialsSchema, publishFbSchema, publishIgSchema]).safeParse(await req.json());
+    const parsed = z.union([saveCredentialsSchema, saveConfigIdSchema, publishFbSchema, publishIgSchema]).safeParse(await req.json());
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid request", details: parsed.error.flatten() }, { status: 400 });
     }
@@ -78,6 +86,15 @@ export async function POST(req: Request) {
         data: { adminId: admin.id, action: "MARKETING_META_CREDENTIALS_SAVED", entity: "SiteSetting", entityId: "meta_app_id", details: "Meta App ID/Secret saved for Facebook+Instagram login" },
       });
       return NextResponse.json({ ok: true, configured: true });
+    }
+
+    if (body.action === "save_config_id") {
+      const id = body.configId.trim();
+      await putMetaSetting(db, "meta_login_config_id", id);
+      await db.auditLog.create({
+        data: { adminId: admin.id, action: "MARKETING_META_CONFIG_ID_SAVED", entity: "SiteSetting", entityId: "meta_login_config_id", details: id ? "Facebook Login for Business config_id saved" : "config_id cleared (classic scope mode)" },
+      });
+      return NextResponse.json({ ok: true, configId: id || null });
     }
 
     if (body.action === "publish_facebook") {
