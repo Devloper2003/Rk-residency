@@ -1,5 +1,6 @@
 import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '@prisma/client'
+import { getCloudflareContext } from '@opennextjs/cloudflare'
 
 /**
  * db.ts — Prisma client over the pg driver adapter, Workers-safe.
@@ -35,7 +36,7 @@ import { PrismaClient } from '@prisma/client'
  */
 
 function makeClient(): PrismaClient {
-  const connectionString = process.env.DATABASE_URL || ''
+  const connectionString = hyperdriveUrl() ?? (process.env.DATABASE_URL || '')
   const adapter = new PrismaPg({
     connectionString,
     max: 2,
@@ -45,11 +46,36 @@ function makeClient(): PrismaClient {
   return new PrismaClient({ adapter })
 }
 
+/**
+ * Hyperdrive fast path (optional): when a HYPERDRIVE binding exists, use its
+ * pre-pooled connectionString instead of raw TCP to Neon. Hyperdrive keeps
+ * warm connections to the database outside the isolate, which removes the
+ * per-burst TCP+TLS+SCRAM cold connect (2-10 s from Workers) entirely.
+ * To enable: create the Hyperdrive config in the dashboard (Workers & Pages
+ * -> Hyperdrive -> Create, paste the same Neon DATABASE_URL), then add to
+ * wrangler.jsonc:
+ *   "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<config-id>" }]
+ * Everything here picks it up automatically on the next deploy.
+ */
+function hyperdriveUrl(): string | null {
+  try {
+    const env = (getCloudflareContext() as unknown as {
+      env?: { HYPERDRIVE?: { connectionString?: string } }
+    }).env
+    const cs = env?.HYPERDRIVE?.connectionString
+    return typeof cs === 'string' && cs.length > 0 ? cs : null
+  } catch {
+    // Not inside a request context (module init, plain Node scripts) — fall
+    // back to process.env.DATABASE_URL.
+    return null
+  }
+}
+
 const gBurst = globalThis as unknown as {
   __RK_DB_BURST__?: { client: PrismaClient; stamp: number }
 }
 
-const BURST_TTL_MS = 25_000
+const BURST_TTL_MS = 45_000
 
 /** Returns the current burst's healthy PrismaClient (creates one if stale). */
 export function getDb(): PrismaClient {
