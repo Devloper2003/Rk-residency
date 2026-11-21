@@ -46,9 +46,9 @@ function makeClient(): PrismaClient {
   // burst unhealthy so the very next db access gets a fresh pool instead.
   const pool = new pg.Pool({
     connectionString,
-    max: 2,
+    max: 1,
     connectionTimeoutMillis: 10_000,
-    idleTimeoutMillis: 15_000,
+    idleTimeoutMillis: 10_000,
   })
   pool.on('error', (err) => {
     console.error('[db] pg pool client error (pool will be replaced):', err?.message)
