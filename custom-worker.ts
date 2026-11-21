@@ -125,35 +125,7 @@ async function runCronRoute(env: CronWorkerEnv, cron: string): Promise<void> {
 }
 
 export default {
-  // TEMP DEBUG (remove after diagnosis): wrap the OpenNext handler so ANY
-  // exception that propagates out of the fetch chain is returned to the client
-  // with its real name/message/stack instead of Cloudflare's opaque
-  // "error code: 1101" body.
-  async fetch(
-    request: Request,
-    env: CronWorkerEnv & Record<string, unknown>,
-    ctx: CronExecutionContext,
-  ): Promise<Response> {
-    try {
-      const res = await handler.fetch(request, env, ctx);
-      // TEMP DEBUG: annotate every response with the live DB connection path
-      // and pool-error counter (diagnosing the intermittent 1101/timeout 500s).
-      const g = globalThis as unknown as { __RK_DB_SRC__?: string; __RK_POOL_ERRS__?: number };
-      const out = new Response(res.body, res);
-      out.headers.set("x-rk-db-src", g.__RK_DB_SRC__ ?? "no-db-use");
-      out.headers.set("x-rk-pool-errs", String(g.__RK_POOL_ERRS__ ?? 0));
-      return out;
-    } catch (err) {
-      const detail =
-        err instanceof Error
-          ? `${err.name}: ${err.message}\n${err.stack ?? ""}`
-          : String(err);
-      console.error("[worker] uncaught from fetch chain:", detail.slice(0, 800));
-      return new Response(`DEBUG_UNCAUGHT: ${detail.slice(0, 2000)}`, {
-        status: 500,
-      });
-    }
-  },
+  fetch: handler.fetch,
   scheduled(controller: CronScheduledController, env: CronWorkerEnv, ctx: CronExecutionContext) {
     ctx.waitUntil(runCronRoute(env, controller.cron));
   },

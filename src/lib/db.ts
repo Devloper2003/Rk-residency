@@ -38,21 +38,12 @@ import { getCloudflareContext } from '@opennextjs/cloudflare'
 
 function makeClient(): PrismaClient {
   const connectionString = hyperdriveUrl() ?? (process.env.DATABASE_URL || '')
-  // TEMP DEBUG: expose which connection path is live (host only — never the
-  // credentials) so a response header can reveal it in production.
-  try {
-    const host = new URL(connectionString.replace('postgresql://', 'http://')).host.slice(0, 40)
-    ;(globalThis as unknown as { __RK_DB_SRC__?: string }).__RK_DB_SRC__ =
-      (hyperdriveUrl() ? 'hyperdrive' : 'env-database-url') + ' @ ' + host
-  } catch {
-    ;(globalThis as unknown as { __RK_DB_SRC__?: string }).__RK_DB_SRC__ = 'unknown'
-  }
   // Explicit Pool instead of config: pg.Pool emits a Node-style 'error' event
   // whenever an idle/background client dies (socket closed by Hyperdrive or
   // Neon, failed connect, etc.). Without a listener, workerd treats it as an
-  // unhandled exception and kills the whole request with "error code: 1101" —
-  // the exact intermittent crash seen on most pages. The handler marks the
-  // burst unhealthy so the very next db access gets a fresh pool instead.
+  // unhandled exception and kills the whole request with "error code: 1101".
+  // The handler marks the burst unhealthy so the very next db access gets a
+  // fresh pool instead (self-healing).
   const pool = new pg.Pool({
     connectionString,
     max: 1,
