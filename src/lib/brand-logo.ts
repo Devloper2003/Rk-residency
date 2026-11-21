@@ -1,5 +1,4 @@
 import { db } from "@/lib/db";
-import sharp from "sharp";
 
 /**
  * brand-logo.ts — loads the owner's uploaded brand logo (SiteSetting
@@ -15,9 +14,10 @@ import sharp from "sharp";
  * filenames are content-hashes, so a fresh upload automatically gets a fresh
  * cache entry (new filename = cache miss).
  *
- * Returns null when the setting is empty, the asset is missing, or conversion
- * fails — callers fall back to the built-in RK monogram, so document
- * generation can never break because of a bad logo.
+ * sharp is loaded via DYNAMIC import: its native binary cannot run inside
+ * Cloudflare Workers (workerd). When sharp is unavailable (CF) or conversion
+ * fails, we return null and callers fall back to the built-in RK monogram —
+ * document generation can never break because of a bad/missing logo.
  */
 const g = globalThis as any;
 const CACHE_KEY = "__RK_BRAND_LOGO_CACHE__";
@@ -61,7 +61,28 @@ export async function brandLogoPng(cfg: Cfg): Promise<Buffer | null> {
       return null;
     }
 
-    const png = await sharp(raw)
+    const sharpMod = await import("sharp")
+      .then((m: unknown) => {
+        const mod = m as { default?: ((input: Buffer) => any) } & ((input: Buffer) => any);
+        return (mod?.default ?? (mod as (input: Buffer) => any)) || null;
+      })
+      .catch(() => null);
+    if (!sharpMod) {
+      // Cloudflare Workers (workerd) cannot load sharp's native binary.
+      // Graceful degradation: PNG logos pass through untouched (PDFKit can
+      // render PNG natively), anything else falls back to the RK monogram.
+      if (/\.png$/i.test(m?.[1] || url)) {
+        cache.key = key;
+        cache.buf = raw;
+        return raw;
+      }
+      console.error("[brand-logo] sharp unavailable in this runtime — using monogram fallback");
+      cache.key = key;
+      cache.buf = null;
+      return null;
+    }
+
+    const png = await sharpMod(raw)
       .resize(320, 320, { fit: "inside" })
       .png({ compressionLevel: 9 })
       .toBuffer();

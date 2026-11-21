@@ -1,8 +1,36 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { verifyAdmin } from "@/lib/admin-auth";
-import sharp from "sharp";
 import crypto from "crypto";
+
+/**
+ * sharp is a native binary — it runs on Vercel/Node but CANNOT load inside
+ * Cloudflare Workers (workerd). Load it lazily; when unavailable the upload
+ * still succeeds by storing the ORIGINAL bytes (no resize/webp re-encode),
+ * so the admin panel keeps working on every runtime.
+ */
+/** Minimal typed surface of the sharp calls we use (dynamic-import friendly). */
+interface SharpInstance {
+  resize(
+    width: number | null,
+    height: number | null | undefined,
+    opts?: { withoutEnlargement?: boolean }
+  ): SharpInstance;
+  webp(opts?: { quality?: number }): SharpInstance;
+  toBuffer(): Promise<Buffer>;
+}
+type SharpFn = ((input: Buffer) => SharpInstance) | null;
+let sharpCache: SharpFn | undefined;
+async function loadSharp(): Promise<SharpFn> {
+  if (sharpCache !== undefined) return sharpCache;
+  sharpCache = await import("sharp")
+    .then((m: unknown) => {
+      const mod = m as { default?: SharpFn } & SharpFn;
+      return (mod?.default ?? (mod as SharpFn)) || null;
+    })
+    .catch(() => null);
+  return sharpCache;
+}
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +44,7 @@ export const dynamic = "force-dynamic";
  * different bytes => different URL), fixing the "new upload still shows the
  * same image" bug after a delete + re-upload of a same-named file.
  */
-function slugifyFilename(originalName: string, hash: string): string {
+function slugifyFilename(originalName: string, hash: string, ext: string): string {
   const base = originalName.replace(/\.[^.]+$/, ""); // strip extension
   const slug = base
     .toLowerCase()
@@ -28,7 +56,7 @@ function slugifyFilename(originalName: string, hash: string): string {
   // Guarantee a meaningful name even for gibberish originals like "IMG_0001"
   // — prefix keeps every upload tied to the site (nice in Google Images).
   const safe = slug || "image";
-  return `rk-residency-vrindavan-${safe}-${hash.slice(0, 8)}.webp`;
+  return `rk-residency-vrindavan-${safe}-${hash.slice(0, 8)}${ext}`;
 }
 
 /** Find a unique filename in the DB, appending -2, -3… on collisions. */
@@ -105,6 +133,7 @@ export async function POST(req: Request) {
     const urls: string[] = [];
     const errors: string[] = [];
     let deduped = 0;
+    const sharpMod = await loadSharp();
 
     for (const file of rawFiles) {
       if (!(file instanceof File)) {
@@ -125,10 +154,24 @@ export async function POST(req: Request) {
       try {
         const buffer = Buffer.from(await file.arrayBuffer());
 
-        const processed = await sharp(buffer)
-          .resize(1600, null, { withoutEnlargement: true })
-          .webp({ quality: 80 })
-          .toBuffer();
+        // sharp path (Vercel/Node): resize + webp re-encode.
+        // Fallback path (Cloudflare Workers): keep the original bytes —
+        // dedupe + DB storage still work identically.
+        let processed: Buffer = buffer;
+        let mimeType = file.type || "application/octet-stream";
+        let ext = (file.name.match(/\.[^.]+$/)?.[0] || ".jpg").toLowerCase();
+        if (sharpMod) {
+          processed = await sharpMod(buffer)
+            .resize(1600, null, { withoutEnlargement: true })
+            .webp({ quality: 80 })
+            .toBuffer();
+          mimeType = "image/webp";
+          ext = ".webp";
+        } else {
+          // normalise known-safe mimes; anything odd stays as sent
+          if (mimeType === "image/jpg") mimeType = "image/jpeg";
+          if (!mimeType.startsWith("image/")) mimeType = "image/jpeg";
+        }
 
         // Identical content keeps reusing the SAME URL (dedupe), regardless
         // of what the admin called the file this time.
@@ -144,7 +187,7 @@ export async function POST(req: Request) {
 
         // Descriptive slug + short content-hash suffix (+ numeric fallback on
         // the impossible-in-practice collision) — unique URL per unique image.
-        const candidate = slugifyFilename(file.name || "image", hash);
+        const candidate = slugifyFilename(file.name || "image", hash, ext);
         const filename = await uniqueFilename(candidate);
 
         await db.mediaAsset.create({
@@ -152,7 +195,7 @@ export async function POST(req: Request) {
             filename,
             alt,
             contentHash: hash,
-            mimeType: "image/webp",
+            mimeType,
             data: new Uint8Array(processed),
             size: processed.length,
           },

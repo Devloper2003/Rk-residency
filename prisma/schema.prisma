@@ -2,7 +2,8 @@
 // Heritage luxury hotel in Vrindavan — booking engine, CMS, reviews, leads.
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {

@@ -1,12 +1,27 @@
+import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '@prisma/client'
+
+/**
+ * db.ts — Prisma client over the pg driver adapter.
+ *
+ * Why the adapter: the site runs on BOTH Vercel (Node) and Cloudflare
+ * Workers (workerd via OpenNext). Workers cannot execute Prisma's compiled
+ * Rust query engine binary, but they DO run the pg driver adapter (plain
+ * postgres wire protocol over nodejs_compat TCP). The adapter works
+ * identically on Node, so one codebase serves both platforms.
+ */
+function makeClient(): PrismaClient {
+  const connectionString = process.env.DATABASE_URL || ''
+  const adapter = new PrismaPg({ connectionString })
+  return new PrismaClient({ adapter })
+}
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
 export const db =
-  globalForPrisma.prisma ??
-  new PrismaClient()
+  globalForPrisma.prisma ?? makeClient()
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db
 

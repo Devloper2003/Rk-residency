@@ -12,7 +12,12 @@ const nextConfig: NextConfig = {
   // tree-shakes the .afm files out of the serverless bundle → ENOENT error
   // on Vercel. Marking it as a server external package forces the whole
   // pdfkit package (including js/data/*.afm) to be bundled verbatim.
-  serverExternalPackages: ["pdfkit", "fontkit", "linebreak", "png-js", "razorpay", "sharp"],
+  serverExternalPackages: [
+    "pdfkit", "fontkit", "linebreak", "png-js", "razorpay", "sharp",
+    // Prisma must stay external so OpenNext can patch the generated client
+    // for Cloudflare Workers (driver-adapter mode).
+    "@prisma/client", ".prisma/client", "@prisma/adapter-pg",
+  ],
   async redirects() {
     return [
       // Audit H4: duplicate blog posts — 301 the thin duplicate to the rich
