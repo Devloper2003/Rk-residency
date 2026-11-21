@@ -58,6 +58,12 @@ function makeClient(): PrismaClient {
  * Everything here picks it up automatically on the next deploy.
  */
 function hyperdriveUrl(): string | null {
+  // During `next build`, OpenNext exposes a build-time binding context where
+  // the Hyperdrive LOCAL emulator requires a local Postgres connection string
+  // we don't have (and don't need — every page is force-dynamic). Touching the
+  // binding there crashes the build with an unhandledRejection, so bail out
+  // during the build phase and fall back to process.env.DATABASE_URL.
+  if (process.env.NEXT_PHASE === 'phase-production-build') return null
   try {
     const env = (getCloudflareContext() as unknown as {
       env?: { HYPERDRIVE?: { connectionString?: string } }

@@ -45,7 +45,14 @@
                         // adapter — removes the per-burst TCP+TLS cold connect to
                         // Neon that intermittently hung >10s from Workers.
                         "binding": "HYPERDRIVE",
-                        "id": "4d81332048c64761a37439ea1731c2c3"
+                        "id": "4d81332048c64761a37439ea1731c2c3",
+                        // Placeholder ONLY for local emulation (next.config.ts calls
+                        // initOpenNextCloudflareForDev(), which eagerly provisions a
+                        // local Hyperdrive emulator — without a string it hard-crashes
+                        // the build with an unhandledRejection). Never used in
+                        // production: there the real Neon URL lives inside the
+                        // Hyperdrive config in the Cloudflare dashboard.
+                        "localConnectionString": "postgresql://postgres:postgres@localhost:5432/postgres"
                 }
         ],
         "triggers": {
