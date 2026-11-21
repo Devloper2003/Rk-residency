@@ -18,8 +18,9 @@
 
 /**
  * Canonical production origin, with protocol. Trailing slash is stripped.
- * Set the SITE_URL environment variable in production (Vercel → Settings →
- * Environment Variables) to the FINAL domain, e.g.:
+ * Set the SITE_URL environment variable in production (Cloudflare → Workers
+ * → rk-residency-final → Settings → Variables and Secrets) to the FINAL
+ * domain, e.g.:
  *   SITE_URL=https://www.rkresidencyvrindavan.in
  */
 export const SITE_URL: string = (
@@ -29,13 +30,13 @@ export const SITE_URL: string = (
 /**
  * Runtime SEO guard: warn loudly if SITE_URL points to the legacy domain
  * (rkresidency.in) instead of the canonical production domain. This catches
- * a misconfigured Vercel env var before users and crawlers see wrong URLs.
+ * a misconfigured Worker env var before users and crawlers see wrong URLs.
  */
 if (typeof SITE_URL === "string" && SITE_URL.includes("rkresidency.in") && !SITE_URL.includes("rkresidencyvrindavan.in")) {
   console.error(
     `[SEO] ⚠️ SITE_URL is set to "${SITE_URL}" which is the LEGACY domain.\n` +
     `  Every canonical, og:url, and sitemap URL will point to the wrong domain.\n` +
-    `  Fix: Set SITE_URL=https://www.rkresidencyvrindavan.in in Vercel → Settings → Environment Variables.`
+    `  Fix: Set SITE_URL=https://www.rkresidencyvrindavan.in in Cloudflare → Workers → rk-residency-final → Settings → Variables and Secrets.`
   );
 }
 

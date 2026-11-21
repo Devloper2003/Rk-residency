@@ -158,7 +158,7 @@ async function buildCatalog(): Promise<CatalogItem[]> {
     },
     blog_autopilot: {
       ready: aiOk,
-      hint: aiOk ? "" : "Vercel → Settings → Environment Variables me ANTHROPIC_API_KEY add karein (AI content generation ke liye)",
+      hint: aiOk ? "" : "Cloudflare → Workers → rk-residency-final → Settings → Variables and Secrets me ANTHROPIC_API_KEY add karein (AI content generation ke liye)",
     },
   };
 
@@ -278,7 +278,7 @@ async function runAutomation(id: AutomationId): Promise<{ detail: string; ok: bo
           res.reason === "automation disabled in admin"
             ? "automation OFF hai — pehle switch ON karein"
             : res.reason === "ANTHROPIC_API_KEY not configured"
-              ? "Vercel env me ANTHROPIC_API_KEY configure karein"
+              ? "Cloudflare Worker env me ANTHROPIC_API_KEY configure karein"
               : res.reason || "run skip ho gaya";
         return { ok: true, detail: `Autopilot run nahi hua: ${hint}` };
       }

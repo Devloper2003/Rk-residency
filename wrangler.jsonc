@@ -1,6 +1,10 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"main": ".open-next/worker.js",
+	// Custom worker entry: re-uses the OpenNext fetch handler (generated in
+	// .open-next/worker.js) and adds a scheduled handler so the cron triggers
+	// below can fire /api/cron/* — this replaces the old vercel.json crons.
+	// see https://opennext.js.org/cloudflare/howtos/custom-worker
+	"main": "./custom-worker.ts",
 	"name": "rk-residency-final",
 	"compatibility_date": "2026-11-19",
 	"compatibility_flags": [
@@ -23,5 +27,15 @@
 		// Enable image optimization
 		// see https://opennext.js.org/cloudflare/howtos/image
 		"binding": "IMAGES"
+	},
+	"triggers": {
+		// Migrated 1:1 from the deleted vercel.json. The strings MUST stay
+		// identical to the keys of CRON_ROUTES in custom-worker.ts.
+		"crons": [
+			"30 2 * * *",
+			"40 3 * * *",
+			"0 6 * * *",
+			"0 5 1 * *"
+		]
 	}
 }
