@@ -6,6 +6,15 @@
         // see https://opennext.js.org/cloudflare/howtos/custom-worker
         "main": "./custom-worker.ts",
         "name": "rk-residency",
+        // Preserve runtime vars/secrets set via the dashboard (DATABASE_URL,
+        // SITE_URL, CRON_SECRET, ADMIN_SESSION_SECRET...) across deploys. Without
+        // this, every `wrangler deploy` (incl. Workers Builds CI) would wipe them
+        // and the site would 500 again with missing env vars.
+        "keep_vars": true,
+        // Run the Worker in the region closest to the Neon Postgres database
+        // (us-east-1) instead of always running near the visitor — cuts the
+        // per-request DB round-trip latency dramatically.
+        "placement": { "mode": "smart" },
         "compatibility_date": "2026-11-19",
         "compatibility_flags": [
                 "nodejs_compat",
