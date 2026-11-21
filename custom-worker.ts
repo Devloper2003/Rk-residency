@@ -135,7 +135,14 @@ export default {
     ctx: CronExecutionContext,
   ): Promise<Response> {
     try {
-      return await handler.fetch(request, env, ctx);
+      const res = await handler.fetch(request, env, ctx);
+      // TEMP DEBUG: annotate every response with the live DB connection path
+      // and pool-error counter (diagnosing the intermittent 1101/timeout 500s).
+      const g = globalThis as unknown as { __RK_DB_SRC__?: string; __RK_POOL_ERRS__?: number };
+      const out = new Response(res.body, res);
+      out.headers.set("x-rk-db-src", g.__RK_DB_SRC__ ?? "no-db-use");
+      out.headers.set("x-rk-pool-errs", String(g.__RK_POOL_ERRS__ ?? 0));
+      return out;
     } catch (err) {
       const detail =
         err instanceof Error

@@ -38,6 +38,15 @@ import { getCloudflareContext } from '@opennextjs/cloudflare'
 
 function makeClient(): PrismaClient {
   const connectionString = hyperdriveUrl() ?? (process.env.DATABASE_URL || '')
+  // TEMP DEBUG: expose which connection path is live (host only — never the
+  // credentials) so a response header can reveal it in production.
+  try {
+    const host = new URL(connectionString.replace('postgresql://', 'http://')).host.slice(0, 40)
+    ;(globalThis as unknown as { __RK_DB_SRC__?: string }).__RK_DB_SRC__ =
+      (hyperdriveUrl() ? 'hyperdrive' : 'env-database-url') + ' @ ' + host
+  } catch {
+    ;(globalThis as unknown as { __RK_DB_SRC__?: string }).__RK_DB_SRC__ = 'unknown'
+  }
   // Explicit Pool instead of config: pg.Pool emits a Node-style 'error' event
   // whenever an idle/background client dies (socket closed by Hyperdrive or
   // Neon, failed connect, etc.). Without a listener, workerd treats it as an
@@ -48,9 +57,11 @@ function makeClient(): PrismaClient {
     connectionString,
     max: 1,
     connectionTimeoutMillis: 10_000,
-    idleTimeoutMillis: 10_000,
+    idleTimeoutMillis: 60_000,
   })
   pool.on('error', (err) => {
+    const g = globalThis as unknown as { __RK_POOL_ERRS__?: number }
+    g.__RK_POOL_ERRS__ = (g.__RK_POOL_ERRS__ ?? 0) + 1
     console.error('[db] pg pool client error (pool will be replaced):', err?.message)
     gBurst.__RK_DB_BURST__ = undefined
   })
@@ -93,7 +104,7 @@ const gBurst = globalThis as unknown as {
   __RK_DB_BURST__?: { client: PrismaClient; stamp: number }
 }
 
-const BURST_TTL_MS = 45_000
+const BURST_TTL_MS = 120_000
 
 /** Returns the current burst's healthy PrismaClient (creates one if stale). */
 export function getDb(): PrismaClient {
