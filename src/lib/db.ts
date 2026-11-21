@@ -47,7 +47,11 @@ function makeClient(): PrismaClient {
   const pool = new pg.Pool({
     connectionString,
     max: 1,
-    connectionTimeoutMillis: 10_000,
+    // A healthy Hyperdrive connect completes in well under 1.5 s. Anything
+    // longer means the origin pool is saturated and the connect is queued —
+    // failing fast (clean app-level error) beats hanging a whole render for
+    // 10+ seconds.
+    connectionTimeoutMillis: 3_500,
     idleTimeoutMillis: 60_000,
   })
   pool.on('error', (err) => {
