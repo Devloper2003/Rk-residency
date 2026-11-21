@@ -37,6 +37,17 @@
                 // see https://opennext.js.org/cloudflare/howtos/image
                 "binding": "IMAGES"
         },
+        "hyperdrive": [
+                {
+                        // Pooled, warm connections to the Neon Postgres database.
+                        // src/lib/db.ts picks this up automatically (hyperdriveUrl())
+                        // and passes env.HYPERDRIVE.connectionString to Prisma's pg
+                        // adapter — removes the per-burst TCP+TLS cold connect to
+                        // Neon that intermittently hung >10s from Workers.
+                        "binding": "HYPERDRIVE",
+                        "id": "4d81332048c64761a37439ea1731c2c3"
+                }
+        ],
         "triggers": {
                 // Migrated 1:1 from the deleted vercel.json. The strings MUST stay
                 // identical to the keys of CRON_ROUTES in custom-worker.ts.
