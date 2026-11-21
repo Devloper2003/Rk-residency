@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "prisma db push --skip-generate && prisma generate && next build --webpack",
+    "build": "prisma generate && next build --webpack",
     "dev": "next dev -p 3000",
     "prebuild": "node scripts/patch-pdfkit-fonts.cjs",
     "postinstall": "prisma generate && node scripts/patch-pdfkit-fonts.cjs",
