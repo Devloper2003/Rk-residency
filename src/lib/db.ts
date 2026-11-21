@@ -1,5 +1,6 @@
 import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from '@prisma/client'
+import pg from 'pg'
 import { getCloudflareContext } from '@opennextjs/cloudflare'
 
 /**
@@ -37,12 +38,23 @@ import { getCloudflareContext } from '@opennextjs/cloudflare'
 
 function makeClient(): PrismaClient {
   const connectionString = hyperdriveUrl() ?? (process.env.DATABASE_URL || '')
-  const adapter = new PrismaPg({
+  // Explicit Pool instead of config: pg.Pool emits a Node-style 'error' event
+  // whenever an idle/background client dies (socket closed by Hyperdrive or
+  // Neon, failed connect, etc.). Without a listener, workerd treats it as an
+  // unhandled exception and kills the whole request with "error code: 1101" —
+  // the exact intermittent crash seen on most pages. The handler marks the
+  // burst unhealthy so the very next db access gets a fresh pool instead.
+  const pool = new pg.Pool({
     connectionString,
     max: 2,
     connectionTimeoutMillis: 10_000,
     idleTimeoutMillis: 15_000,
   })
+  pool.on('error', (err) => {
+    console.error('[db] pg pool client error (pool will be replaced):', err?.message)
+    gBurst.__RK_DB_BURST__ = undefined
+  })
+  const adapter = new PrismaPg(pool)
   return new PrismaClient({ adapter })
 }
 
