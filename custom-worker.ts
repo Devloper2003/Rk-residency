@@ -36,6 +36,32 @@
 import handler from "./.open-next/worker.js";
 
 /**
+ * Isolate-survival guard.
+ *
+ * workerd aborts the ENTIRE isolate on an unhandled promise rejection —
+ * every request in flight on that isolate dies with "error code: 1101",
+ * even requests whose own work was perfectly fine (this is exactly the
+ * intermittent instant-500 pattern seen on most pages). With nodejs_compat,
+ * registering an 'unhandledRejection' listener switches workerd to Node-like
+ * behaviour: the rejection is logged instead of crashing the isolate.
+ */
+const nodeProcess = (globalThis as unknown as { process?: { on?: (evt: string, fn: (...args: unknown[]) => void) => void } }).process;
+if (typeof nodeProcess?.on === "function") {
+  nodeProcess.on("unhandledRejection", (reason: unknown) => {
+    console.error(
+      "[worker] unhandledRejection (isolate survives):",
+      reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason),
+    );
+  });
+  nodeProcess.on("uncaughtException", (err: unknown) => {
+    console.error(
+      "[worker] uncaughtException (isolate survives):",
+      err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+    );
+  });
+}
+
+/**
  * Minimal structural types for the runtime pieces we touch, so this file
  * typechecks under the project tsconfig without depending on
  * @cloudflare/workers-types.
